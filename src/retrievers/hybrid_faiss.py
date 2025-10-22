@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 from ..datasets.schema import Document, Query
 from ..tri_modal.vectorizer import TriModalVectorizer
 from ..tri_modal.hybrid_index import HybridIndex
@@ -27,8 +28,18 @@ class HybridRetriever(AbstractRetriever):
                  ner_use_noun_chunks: bool = True,
                  ner_batch_size: int = 64,
                  ner_n_process: int = 1,
+                 ner_allowed_labels: Optional[List[str]] = None,
+                 entity_artifact_dir: Optional[str] = None,
+                 entity_force_rebuild: bool = False,
                  # DISPOSITIVO
-                 device: Optional[str] = None):
+                 device: Optional[str] = None,
+                 # FAISS
+                 faiss_factory: Optional[str] = None,     # ex.: "OPQ64,IVF4096,PQ64x8"
+                 faiss_metric: str = "ip",
+                 faiss_nprobe: Optional[int] = None,
+                 faiss_train_size: int = 0,
+                 index_artifact_dir: Optional[str] = None,
+                 index_name: str = "hybrid.index"):
         self.vec = TriModalVectorizer(
             sem_dim=sem_dim,
             tfidf_dim=tfidf_dim,
@@ -43,28 +54,43 @@ class HybridRetriever(AbstractRetriever):
             ner_use_noun_chunks=ner_use_noun_chunks,
             ner_batch_size=ner_batch_size,
             ner_n_process=ner_n_process,
+            ner_allowed_labels=ner_allowed_labels,
+            entity_artifact_dir=entity_artifact_dir,
+            entity_force_rebuild=entity_force_rebuild,
             device=device,
         )
-        self.index = HybridIndex(self.vec)
+        self.index = HybridIndex(
+            vectorizer=self.vec,
+            faiss_factory=faiss_factory,
+            faiss_metric=faiss_metric,
+            faiss_nprobe=faiss_nprobe,
+            faiss_train_size=faiss_train_size,
+            artifact_dir=index_artifact_dir,
+            index_name=index_name,
+        )
         self.reranker = TriModalReranker(self.vec)
         self.topk_first = topk_first
         self.policy = HeuristicLLMPolicy() if policy == "heuristic" else StaticPolicy()
         self._doc_map: Dict[str, str] = {}  # doc_id -> texto
 
     def build_index(self, docs: List[Document]):
-        # Fit com textos completos (title + text)
+        # Fit com textos completos
         self.vec.fit_corpus((d.title or "") + " " + (d.text or "") for d in docs)
+        # Indexa
         self.index.build((d.doc_id, (d.title or "") + " " + (d.text or "")) for d in docs)
         self._doc_map = {d.doc_id: (d.title or "") + " " + (d.text or "") for d in docs}
+        # salva cache de embeddings de entidade (se configurado)
+        try:
+            self.vec.entities.save_embedding_cache()
+        except Exception:
+            pass
 
     def retrieve(self, queries: List[Query], k: int = 10) -> Dict[str, List[Tuple[str, float]]]:
         results: Dict[str, List[Tuple[str, float]]] = {}
         for q in queries:
             q_vec = self.vec.concat(self.vec.encode_text(q.text, is_query=True))
-            # 1ª fase
             candidates = self.index.search(q_vec, topk=self.topk_first)
             cand_texts = [(doc_id, self._doc_map[doc_id]) for doc_id, _ in candidates]
-            # pesos
             w = self.policy.weights(q.text)
             reranked = self.reranker.rescore(q.text, cand_texts, w)
             results[q.query_id] = reranked[:k]

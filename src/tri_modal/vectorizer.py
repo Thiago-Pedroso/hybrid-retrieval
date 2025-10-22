@@ -1,24 +1,13 @@
-# src/tri_modal/vectorizer.py
 from __future__ import annotations
 import numpy as np
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Optional, List
+from pathlib import Path
 from .encoders import HFSemanticEncoder, _StubSemanticEncoder, TfidfEncoder, l2norm
-from .entity_encoder import EntityEncoderReal, NERConfig
+from .entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
 
 class TriModalVectorizer:
-    """
-    Monta [ s ; t ; g ] com L2 por fatia e L2 global.
-
-    Parâmetros principais:
-      - semantic_backend: "hf" | "stub"
-      - semantic_model_name: ex. "sentence-transformers/all-MiniLM-L6-v2" ou "BAAI/bge-large-en-v1.5"
-      - tfidf_backend: "sklearn" | "pyserini"
-      - graph_model_name: modelo HF para embutir entidades (default: BGE-Large)
-      - ner_backend/model: qual pipeline spaCy/scispaCy usar para NER
-      - query_prefix/doc_prefix: úteis para BGE (ex.: "query: ", "passage: ")
-    """
     def __init__(self,
-                 sem_dim: Optional[int] = None,                 # usado apenas no stub
+                 sem_dim: Optional[int] = None,
                  tfidf_dim: int = 1000,
                  seed: int = 42,
                  min_df: int = 2,
@@ -27,15 +16,18 @@ class TriModalVectorizer:
                  tfidf_backend: str = "sklearn",
                  query_prefix: str = "",
                  doc_prefix: str = "",
-                 # ==== novos (entidades):
+                 # ENTIDADES
                  graph_model_name: str = "BAAI/bge-large-en-v1.5",
                  ner_backend: str = "scispacy",
                  ner_model: Optional[str] = None,
                  ner_use_noun_chunks: bool = True,
                  ner_batch_size: int = 64,
                  ner_n_process: int = 1,
+                 ner_allowed_labels: Optional[List[str]] = None,
+                 entity_artifact_dir: Optional[str] = None,
+                 entity_force_rebuild: bool = False,
                  device: Optional[str] = None):
-        # SEMÂNTICO (s)
+        # semântico (s)
         if semantic_backend == "hf":
             self.semantic = HFSemanticEncoder(
                 model_name=semantic_model_name,
@@ -48,38 +40,42 @@ class TriModalVectorizer:
             self.semantic = _StubSemanticEncoder(dim=sem_dim or 384, seed=seed)
             sem_out_dim = self.semantic.dim
 
-        # LEXICAL (t)
+        # lexical (t)
         self.tfidf = TfidfEncoder(dim=tfidf_dim, min_df=min_df, backend=tfidf_backend)
 
-        # ENTIDADES (g)
+        # entidades (g)
         ner_cfg = NERConfig(
             backend=ner_backend,
             model=ner_model,
             use_noun_chunks=ner_use_noun_chunks,
             batch_size=ner_batch_size,
             n_process=ner_n_process,
+            allowed_labels=ner_allowed_labels,
+        )
+        cache_cfg = CacheConfig(
+            artifact_dir=Path(entity_artifact_dir) if entity_artifact_dir else None,
+            force_rebuild=entity_force_rebuild,
         )
         self.entities = EntityEncoderReal(
             graph_model_name=graph_model_name,
             device=device,
             ner=ner_cfg,
             min_df=min_df,
+            cache=cache_cfg,
         )
 
-        self.slice_dims = {}  # {"s": sem_out_dim, "t": ?, "g": ent_dim}
+        self.slice_dims = {}
         self.fitted = False
 
     def fit_corpus(self, docs_texts: Iterable[str]):
         docs_texts = list(docs_texts)
-
         # TF-IDF
         self.tfidf.fit(docs_texts)
         tdim = self.tfidf.vocab_size
-
-        # ENTIDADES (DF/IDF no corpus)
+        # ENTIDADES
         self.entities.fit(docs_texts)
         gdim = self.entities.dim
-
+        # s
         sdim = int(self.semantic.dim or 384)
         self.slice_dims = {"s": sdim, "t": tdim, "g": gdim}
         self.fitted = True

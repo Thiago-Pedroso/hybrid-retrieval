@@ -1,3 +1,4 @@
+# scripts/run_retrieval.py
 from __future__ import annotations
 import argparse
 from pathlib import Path
@@ -23,22 +24,38 @@ def parse_args():
     p.add_argument("--semantic-model", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
     p.add_argument("--query-prefix", type=str, default="")
     p.add_argument("--doc-prefix", type=str, default="")
-    p.add_argument("--sem-dim", type=int, default=384)  # só para stub
+    p.add_argument("--sem-dim", type=int, default=384)  # apenas para stub
 
     # tf-idf
     p.add_argument("--tfidf-backend", type=str, choices=["sklearn","pyserini"], default="sklearn")
     p.add_argument("--tfidf-dim", type=int, default=1000)
 
-    # entidades (slice g)
+    # entidades
     p.add_argument("--graph-model", type=str, default="BAAI/bge-large-en-v1.5")
-    p.add_argument("--ner-backend", type=str, choices=["scispacy","spacy"], default="scispacy")
-    p.add_argument("--ner-model", type=str, default="")
-    p.add_argument("--ner-use-noun-chunks", action="store_true", default=True)
-    p.add_argument("--ner-batch-size", type=int, default=64)
-    p.add_argument("--ner-n-process", type=int, default=1)
+    p.add_argument("--ner-backend", dest="ner_backend", type=str, choices=["scispacy","spacy","none"], default="scispacy")
+    p.add_argument("--ner-model", dest="ner_model", type=str, default="")
+    p.add_argument("--ner-allowed-labels", dest="ner_allowed_labels", type=str, default="",
+                   help='CSV de labels aceitas (ex.: "DISEASE,CHEMICAL"). Vazio = sem filtro.')
+    p.add_argument("--ner-use-noun-chunks", dest="ner_use_noun_chunks", action="store_true", default=True)
+    p.add_argument("--ner-batch-size", dest="ner_batch_size", type=int, default=64)
+    p.add_argument("--ner-n-process", dest="ner_n_process", type=int, default=1)
+    p.add_argument("--entity-artifacts", dest="entity_artifact_dir", type=str, default="",
+                   help="Pasta para cachear IDF/embeddings de entidade")
+    p.add_argument("--entity-force-rebuild", dest="entity_force_rebuild", action="store_true", default=False)
 
     # dispositivo
     p.add_argument("--device", type=str, default=None, help="ex.: 'cuda:0' ou 'cpu'")
+
+    # FAISS
+    p.add_argument("--faiss-factory", dest="faiss_factory", type=str, default="",
+                   help='Ex.: "OPQ64,IVF4096,PQ64x8". Vazio = FlatIP')
+    p.add_argument("--faiss-metric", dest="faiss_metric", type=str, choices=["ip","l2"], default="ip")
+    p.add_argument("--faiss-nprobe", dest="faiss_nprobe", type=int, default=0)
+    p.add_argument("--faiss-train-size", dest="faiss_train_size", type=int, default=0,
+                   help="0 = auto (>= 30*nlist).")
+    p.add_argument("--index-artifacts", dest="index_artifact_dir", type=str, default="",
+                   help="Pasta para salvar/carregar índice FAISS")
+    p.add_argument("--index-name", dest="index_name", type=str, default="hybrid.index")
     return p.parse_args()
 
 def main():
@@ -57,6 +74,7 @@ def main():
     qlist = as_queries(queries)
 
     if args.retriever == "hybrid":
+        allowed_labels = [s.strip() for s in args.ner_allowed_labels.split(",") if s.strip()] if args.ner_allowed_labels else None
         retr = HybridRetriever(
             sem_dim=args.sem_dim,
             tfidf_dim=args.tfidf_dim,
@@ -66,12 +84,21 @@ def main():
             query_prefix=args.query_prefix,
             doc_prefix=args.doc_prefix,
             graph_model_name=args.graph_model,
-            ner_backend=args.ner-backend if hasattr(args, "ner-backend") else args.ner_backend,  # robustness
+            ner_backend=args.ner_backend,
             ner_model=(args.ner_model or None),
             ner_use_noun_chunks=args.ner_use_noun_chunks,
             ner_batch_size=args.ner_batch_size,
             ner_n_process=args.ner_n_process,
+            ner_allowed_labels=allowed_labels,
+            entity_artifact_dir=(args.entity_artifact_dir or None),
+            entity_force_rebuild=args.entity_force_rebuild,
             device=args.device,
+            faiss_factory=(args.faiss_factory or None),
+            faiss_metric=args.faiss_metric,
+            faiss_nprobe=(args.faiss_nprobe or None if args.faiss_nprobe <= 0 else args.faiss_nprobe),
+            faiss_train_size=args.faiss_train_size,
+            index_artifact_dir=(args.index_artifact_dir or None),
+            index_name=args.index_name,
         )
     elif args.retriever == "dense":
         retr = DenseFaissStub(dim=args.sem_dim)
