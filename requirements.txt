@@ -1,6 +1,10 @@
 datasets
+pytest
 pandas
 pyarrow
-requests
+numpy
 tqdm
 rank-bm25
+requests
+scikit-learn
+scispacy
