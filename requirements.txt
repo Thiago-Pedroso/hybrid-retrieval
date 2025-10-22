@@ -1,0 +1,6 @@
+datasets
+pandas
+pyarrow
+requests
+tqdm
+rank-bm25
