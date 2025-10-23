@@ -95,16 +95,40 @@ class HybridIndex:
         n_docs = len(doc_list)
         _log.info(f"🏗️  Construindo índice híbrido para {n_docs} documentos")
         
+        # PROTEÇÃO: Limita threads para evitar segfault no Mac M1
+        import os
+        os.environ["OMP_NUM_THREADS"] = "1"
+        os.environ["MKL_NUM_THREADS"] = "1"
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        
         ids = []
         vecs = []
         
+        # Processa em mini-batches para evitar memory issues
+        import gc
+        BATCH_SIZE = 100
+        
         with ProgressLogger(_log, "Encoding documents", total=n_docs, log_every=max(1, n_docs // 10)) as progress:
-            for doc_id, text in doc_list:
-                parts = self.vec.encode_text(text, is_query=False)
-                v = self.vec.concat(parts)
-                ids.append(doc_id)
-                vecs.append(v)
-                progress.update(1)
+            for i, (doc_id, text) in enumerate(doc_list):
+                try:
+                    parts = self.vec.encode_text(text, is_query=False)
+                    v = self.vec.concat(parts)
+                    ids.append(doc_id)
+                    vecs.append(v)
+                    progress.update(1)
+                    
+                    # Garbage collection a cada batch
+                    if (i + 1) % BATCH_SIZE == 0:
+                        gc.collect()
+                except Exception as e:
+                    _log.error(f"Erro ao encodar doc {doc_id}: {e}")
+                    # Continua com vetor zero em caso de erro
+                    v = np.zeros(self.vec.total_dim(), dtype=np.float32)
+                    ids.append(doc_id)
+                    vecs.append(v)
+                    progress.update(1)
         
         with log_time(_log, "Criando matriz de vetores"):
             self.doc_ids = ids

@@ -8,3 +8,6 @@ rank-bm25
 requests
 scikit-learn
 scispacy
+sentence-transformers>=2.0.0
+transformers>=4.30.0
+faiss-cpu
