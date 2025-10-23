@@ -7,17 +7,23 @@ from src.retrievers.bm25_basic import BM25Basic
 from src.retrievers.dense_faiss import DenseFaissStub
 from src.retrievers.hybrid_faiss import HybridRetriever
 from src.utils.io import ensure_dir, predictions_to_jsonl, write_jsonl
-from src.utils.logging import get_logger
+from src.utils.logging import get_logger, set_log_level, enable_file_logging, log_time
 
 RETRIEVERS = ("bm25", "dense", "hybrid")
 
 def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--dataset-root", type=str, required=True)
-    p.add_argument("--retriever", type=str, choices=RETRIEVERS, default="hybrid")
-    p.add_argument("--k", type=int, default=10)
-    p.add_argument("--out", type=str, default="./outputs/predictions.jsonl")
-    p.add_argument("--split-prefer", type=str, default="test,dev,validation,train")
+    p = argparse.ArgumentParser(description="Sistema de Retrieval Híbrido")
+    p.add_argument("--dataset-root", type=str, required=True, help="Pasta com corpus/queries/qrels (BEIR processado)")
+    p.add_argument("--retriever", type=str, choices=RETRIEVERS, default="hybrid", help="Tipo de retriever")
+    p.add_argument("--k", type=int, default=10, help="Top-K resultados por query")
+    p.add_argument("--out", type=str, default="./outputs/predictions.jsonl", help="Arquivo de saída")
+    p.add_argument("--split-prefer", type=str, default="test,dev,validation,train", help="Ordem de preferência de splits")
+    
+    # Logging
+    p.add_argument("--log-level", type=str, choices=["DEBUG", "INFO", "WARNING", "ERROR"], 
+                   default="INFO", help="Nível de log (também via HYBRID_LOG_LEVEL env var)")
+    p.add_argument("--log-file", type=str, default=None, 
+                   help="Se fornecido, salva logs em arquivo (ex: ./logs/run.log)")
 
     # semântico
     p.add_argument("--semantic-backend", type=str, choices=["hf","stub"], default="hf")
@@ -60,18 +66,36 @@ def parse_args():
 
 def main():
     args = parse_args()
-    log = get_logger()
+    
+    # Configura logging
+    set_log_level(args.log_level)
+    if args.log_file:
+        log_path = Path(args.log_file)
+        enable_file_logging(log_path.parent, log_path.name)
+    
+    log = get_logger("main")
+    log.info("="*80)
+    log.info("🚀 SISTEMA DE RETRIEVAL HÍBRIDO")
+    log.info("="*80)
+    
     root = Path(args.dataset_root)
+    log.info(f"📂 Dataset root: {root}")
 
-    corpus, queries, qrels = load_beir_dataset(root)
+    with log_time(log, "Carregando dataset"):
+        corpus, queries, qrels = load_beir_dataset(root)
+    
+    log.info(f"📊 Dataset: {len(corpus)} docs, {len(queries)} queries, {len(qrels)} qrels")
+    
     split = select_split(qrels, tuple(x.strip() for x in args.split_prefer.split(",")))
     qrels_split = qrels[qrels["split"] == split].copy()
-    log.info(f"Usando split={split} | queries no qrels: {qrels_split['query_id'].nunique()}")
+    n_queries_in_split = qrels_split['query_id'].nunique()
+    log.info(f"🎯 Usando split={split} | {n_queries_in_split} queries no qrels")
 
     docs = as_documents(corpus)
     qids = set(qrels_split["query_id"].unique().tolist())
     queries = queries[queries["query_id"].isin(qids)]
     qlist = as_queries(queries)
+    log.info(f"✓ Preparado: {len(docs)} documentos, {len(qlist)} queries")
 
     if args.retriever == "hybrid":
         allowed_labels = [s.strip() for s in args.ner_allowed_labels.split(",") if s.strip()] if args.ner_allowed_labels else None
@@ -105,15 +129,22 @@ def main():
     else:
         retr = BM25Basic()
 
-    log.info(f"Construindo índice para {args.retriever} ...")
-    retr.build_index(docs)
-    log.info(f"Recuperando top-{args.k} para {len(qlist)} queries ...")
-    preds = retr.retrieve(qlist, k=args.k)
+    log.info(f"🔧 Retriever: {args.retriever}")
+    
+    with log_time(log, f"Build index ({args.retriever})"):
+        retr.build_index(docs)
+    
+    with log_time(log, f"Retrieve top-{args.k}"):
+        preds = retr.retrieve(qlist, k=args.k)
 
     out_path = Path(args.out)
     ensure_dir(out_path.parent)
-    write_jsonl(out_path, predictions_to_jsonl(preds))
-    log.info(f"Predições salvas em: {out_path}")
+    with log_time(log, "Salvando predições"):
+        write_jsonl(out_path, predictions_to_jsonl(preds))
+    
+    log.info("="*80)
+    log.info(f"✅ CONCLUÍDO! Predições salvas em: {out_path}")
+    log.info("="*80)
 
 if __name__ == "__main__":
     main()

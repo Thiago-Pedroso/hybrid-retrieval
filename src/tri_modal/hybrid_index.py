@@ -14,6 +14,9 @@ except Exception:
     _HAS_FAISS = False
 
 from .vectorizer import TriModalVectorizer
+from ..utils.logging import get_logger, log_time, ProgressLogger
+
+_log = get_logger("tri_modal.index")
 
 def _parse_nlist(factory: str) -> int:
     m = re.search(r"IVF(\d+)", factory or "")
@@ -88,28 +91,42 @@ class HybridIndex:
 
     def build(self, doc_id_and_text: Iterable[Tuple[str, str]]):
         # vetoriza docs
+        doc_list = list(doc_id_and_text)
+        n_docs = len(doc_list)
+        _log.info(f"🏗️  Construindo índice híbrido para {n_docs} documentos")
+        
         ids = []
         vecs = []
-        for doc_id, text in doc_id_and_text:
-            parts = self.vec.encode_text(text, is_query=False)
-            v = self.vec.concat(parts)
-            ids.append(doc_id)
-            vecs.append(v)
-        self.doc_ids = ids
-        self.doc_mat = np.vstack(vecs).astype(np.float32)
+        
+        with ProgressLogger(_log, "Encoding documents", total=n_docs, log_every=max(1, n_docs // 10)) as progress:
+            for doc_id, text in doc_list:
+                parts = self.vec.encode_text(text, is_query=False)
+                v = self.vec.concat(parts)
+                ids.append(doc_id)
+                vecs.append(v)
+                progress.update(1)
+        
+        with log_time(_log, "Criando matriz de vetores"):
+            self.doc_ids = ids
+            self.doc_mat = np.vstack(vecs).astype(np.float32)
+        _log.info(f"  ✓ Matriz shape={self.doc_mat.shape}, dtype={self.doc_mat.dtype}")
 
         # tenta carregar índice salvo
         if self.try_load():
+            _log.info(f"  ✓ Índice carregado do cache: {self._index_path}")
             return
 
         if not _HAS_FAISS or self.faiss_factory in (None, "", "FlatIP"):
             # IP com vetores L2-normalizados ≈ cosseno
             if _HAS_FAISS:
-                d = self.doc_mat.shape[1]
-                self.index = faiss.IndexFlatIP(d)
-                self.index.add(self.doc_mat)
+                with log_time(_log, "Construindo FAISS IndexFlatIP"):
+                    d = self.doc_mat.shape[1]
+                    self.index = faiss.IndexFlatIP(d)
+                    self.index.add(self.doc_mat)
+                _log.info(f"  ✓ FAISS IndexFlatIP: {self.index.ntotal} vetores, dim={d}")
             else:
                 self.index = None  # fallback NumPy
+                _log.warning("  ⚠️  FAISS não disponível, usando NumPy fallback")
             return
 
         # IndexFactory real
@@ -142,15 +159,19 @@ class HybridIndex:
 
     def search(self, query_vec: np.ndarray, topk: int = 150) -> List[Tuple[str, float]]:
         q = query_vec.reshape(1, -1).astype(np.float32)
+        _log.debug(f"Buscando top-{topk} candidatos (query vec shape={q.shape})")
+        
         if _HAS_FAISS and self.index is not None:
             scores, idx = self.index.search(q, topk)
             idx = idx[0].tolist()
             scores = scores[0].tolist()
+            _log.debug(f"FAISS search concluído: top score={scores[0]:.4f}, min score={scores[-1]:.4f}")
         else:
             # NumPy IP
             sims = (self.doc_mat @ q.T).reshape(-1)
             idx = np.argpartition(sims, -topk)[-topk:]
             idx = idx[np.argsort(sims[idx])[::-1]]
             scores = sims[idx].tolist()
+            _log.debug(f"NumPy search concluído: top score={scores[0]:.4f}, min score={scores[-1]:.4f}")
 
         return [(self.doc_ids[i], float(scores[j])) for j, i in enumerate(idx)]

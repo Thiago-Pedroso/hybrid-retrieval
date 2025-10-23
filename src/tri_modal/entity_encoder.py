@@ -1,3 +1,4 @@
+# src/tri_modal/entity_encoder.py
 from __future__ import annotations
 from typing import Iterable, Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -13,15 +14,15 @@ from .encoders import HFSemanticEncoder, _StubSemanticEncoder, l2norm
 @dataclass
 class NERConfig:
     backend: str = "scispacy"      # "scispacy" | "spacy" | "none"
-    model: Optional[str] = None    # se None, escolhemos um default de acordo com o backend
-    use_noun_chunks: bool = True   # complementar NER com noun_chunks quando disponível
+    model: Optional[str] = None
+    use_noun_chunks: bool = True
     batch_size: int = 64
-    n_process: int = 1             # >1 se tiver CPU sobrando
-    allowed_labels: Optional[List[str]] = None  # ex.: ["DISEASE","CHEMICAL"] p/ SciFact/BC5CDR
+    n_process: int = 1
+    allowed_labels: Optional[List[str]] = None
 
 @dataclass
 class CacheConfig:
-    artifact_dir: Optional[Path] = None  # pasta onde salvar IDF + embeddings (npz/json)
+    artifact_dir: Optional[Path] = None
     force_rebuild: bool = False
 
 def _safe_name(s: str) -> str:
@@ -36,10 +37,10 @@ class EntityEncoderReal:
 
     g(text) = L2( sum_e [ tf(e,text) * idf(e) * emb(e) ] )
 
-    Cache persistente:
-      - {artifact_dir}/entity_idf.json
-      - {artifact_dir}/entity_emb_map.json  (ent->row)
-      - {artifact_dir}/entity_emb.npy       (matriz [V, dim])
+    Cache persistente (versionado por modelo+dim):
+      - entity_idf.json
+      - entity_emb_{signature}.npy
+      - entity_emb_map_{signature}.json
     """
     def __init__(self,
                  graph_model_name: str = "BAAI/bge-large-en-v1.5",
@@ -53,6 +54,7 @@ class EntityEncoderReal:
         self.cache = cache or CacheConfig()
 
         # Encoder de entidade (HF real com fallback)
+        self.model_name = graph_model_name
         try:
             self.embedder = HFSemanticEncoder(model_name=graph_model_name, device=device)
             self.dim = int(self.embedder.dim or 1024)
@@ -62,6 +64,9 @@ class EntityEncoderReal:
             self.embedder = _StubSemanticEncoder(dim=384)
             self.dim = self.embedder.dim
             self._is_stub = True
+
+        # assinatura do cache: modelo + dim
+        self._emb_signature = _safe_name(f"{self.model_name}_{self.dim}")
 
         # NER
         self.ner_cfg = ner or NERConfig()
@@ -81,9 +86,10 @@ class EntityEncoderReal:
         self._embnpy_path = None
         if self.cache.artifact_dir is not None:
             self.cache.artifact_dir.mkdir(parents=True, exist_ok=True)
-            self._idf_path = self.cache.artifact_dir / "entity_idf.json"
-            self._emap_path = self.cache.artifact_dir / "entity_emb_map.json"
-            self._embnpy_path = self.cache.artifact_dir / "entity_emb.npy"
+            self._idf_path   = self.cache.artifact_dir / "entity_idf.json"
+            # arquivos versionados por assinatura
+            self._emap_path  = self.cache.artifact_dir / f"entity_emb_map_{self._emb_signature}.json"
+            self._embnpy_path= self.cache.artifact_dir / f"entity_emb_{self._emb_signature}.npy"
             if not self.cache.force_rebuild:
                 self._try_load_cache()
 
@@ -100,14 +106,8 @@ class EntityEncoderReal:
 
         nlp = None
         if cfg.backend == "scispacy":
-            candidates = [
-                cfg.model] if cfg.model else []
-            # boas opções (se instaladas)
-            candidates += [
-                "en_ner_bc5cdr_md",       # doenças/químicos
-                "en_ner_bionlp13cg_md",   # biomédico amplo
-                "en_core_sci_md",         # sem NER, mas bom tokenizer
-            ]
+            candidates = [cfg.model] if cfg.model else []
+            candidates += ["en_ner_bc5cdr_md", "en_ner_bionlp13cg_md", "en_core_sci_md"]
             for m in candidates:
                 try:
                     nlp = spacy.load(m, disable=["tagger","parser","lemmatizer","textcat"])
@@ -134,7 +134,6 @@ class EntityEncoderReal:
     _simple_tok = re.compile(r"[A-Za-z][A-Za-z0-9_\-/\.]{1,}")
 
     def _extract_simple(self, text: str) -> List[str]:
-        # fallback: tokens longos + maiúsculas como proxy de entidade
         cands = []
         for tok in self._simple_tok.findall(text or ""):
             if (len(tok) >= 10) or (tok[:1].isupper()):
@@ -151,7 +150,6 @@ class EntityEncoderReal:
 
     def _extract_entities_from_doc(self, doc) -> List[str]:
         ents = []
-        # NER
         if getattr(doc, "ents", None):
             for e in doc.ents:
                 if self.ner_cfg.allowed_labels and str(e.label_) not in set(self.ner_cfg.allowed_labels):
@@ -159,7 +157,6 @@ class EntityEncoderReal:
                 txt = (e.text or "").strip()
                 if txt:
                     ents.append(txt)
-        # noun_chunks
         if self.ner_cfg.use_noun_chunks and hasattr(doc, "noun_chunks"):
             try:
                 for chunk in doc.noun_chunks:
@@ -168,7 +165,6 @@ class EntityEncoderReal:
                         ents.append(txt)
             except Exception:
                 pass
-        # normaliza
         normed = []
         for t in ents:
             t = re.sub(r"\s+", " ", t).strip()
@@ -192,8 +188,12 @@ class EntityEncoderReal:
 
     def fit(self, corpus_texts: Iterable[str]):
         if self._idf_path and self._idf_path.exists() and not self.cache.force_rebuild:
-            # já carregado em _try_load_cache()
             self._fitted = True
+            try:
+                with open(self._idf_path, "r", encoding="utf-8") as f:
+                    self.ent2idf = {k: float(v) for k, v in json.load(f).items()}
+            except Exception:
+                pass
             return
 
         df: Dict[str, int] = {}
@@ -220,7 +220,7 @@ class EntityEncoderReal:
         v = self._emb_cache.get(ent)
         if v is not None:
             return v
-        # tenta carregar da matriz persistida
+        # tenta carregar da matriz persistida CORRETA (versionada por assinatura)
         if self._emap_path and self._embnpy_path and self._emap_path.exists() and self._embnpy_path.exists():
             try:
                 with open(self._emap_path, "r", encoding="utf-8") as f:
@@ -229,8 +229,10 @@ class EntityEncoderReal:
                     row = int(emap[ent])
                     mat = np.load(self._embnpy_path)
                     vv = mat[row].astype(np.float32)
-                    self._emb_cache[ent] = vv
-                    return vv
+                    # checa dimensão
+                    if vv.shape[0] == self.dim:
+                        self._emb_cache[ent] = vv
+                        return vv
             except Exception:
                 pass
 
@@ -277,7 +279,7 @@ class EntityEncoderReal:
             warnings.warn(f"[EntityEncoder] Falha ao salvar IDF: {e}")
 
     def save_embedding_cache(self):
-        """Salva o cache de embeddings em {artifact_dir}/entity_emb.npy + map.json."""
+        """Salva o cache de embeddings (versionado por modelo+dim)."""
         if not (self._emap_path and self._embnpy_path):
             return
         try:

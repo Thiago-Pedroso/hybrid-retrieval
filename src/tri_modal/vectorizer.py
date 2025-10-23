@@ -4,6 +4,9 @@ from typing import Dict, Iterable, Optional, List
 from pathlib import Path
 from .encoders import HFSemanticEncoder, _StubSemanticEncoder, TfidfEncoder, l2norm
 from .entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
+from ..utils.logging import get_logger, log_time
+
+_log = get_logger("tri_modal.vectorizer")
 
 class TriModalVectorizer:
     def __init__(self,
@@ -69,15 +72,25 @@ class TriModalVectorizer:
 
     def fit_corpus(self, docs_texts: Iterable[str]):
         docs_texts = list(docs_texts)
+        _log.info(f"🔧 Fitting TriModal vectorizer com {len(docs_texts)} documentos")
+        
         # TF-IDF
-        self.tfidf.fit(docs_texts)
-        tdim = self.tfidf.vocab_size
+        with log_time(_log, "Fit TF-IDF"):
+            self.tfidf.fit(docs_texts)
+            tdim = self.tfidf.vocab_size
+        _log.info(f"  ✓ TF-IDF fitted: vocab_size={tdim}")
+        
         # ENTIDADES
-        self.entities.fit(docs_texts)
-        gdim = self.entities.dim
+        with log_time(_log, "Fit Entity Encoder (NER + IDF)"):
+            self.entities.fit(docs_texts)
+            gdim = self.entities.dim
+        _log.info(f"  ✓ Entity Encoder fitted: dim={gdim}, vocab={len(self.entities.ent2idf)} entidades")
+        
         # s
         sdim = int(self.semantic.dim or 384)
         self.slice_dims = {"s": sdim, "t": tdim, "g": gdim}
+        total_dim = sdim + tdim + gdim
+        _log.info(f"  ✓ Dimensões: semantic={sdim}, tfidf={tdim}, entities={gdim}, total={total_dim}")
         self.fitted = True
 
     def _encode_semantic(self, text: str, is_query: bool) -> np.ndarray:
@@ -93,9 +106,11 @@ class TriModalVectorizer:
 
     def encode_text(self, text: str, is_query: bool = False) -> Dict[str, np.ndarray]:
         assert self.fitted, "Chame fit_corpus() antes de encode_text()"
+        _log.debug(f"Encoding {'query' if is_query else 'document'}: {text[:100]}...")
         s = l2norm(self._encode_semantic(text, is_query=is_query))
         t = l2norm(self._encode_tfidf(text))
         g = l2norm(self._encode_entities(text))
+        _log.debug(f"Encoded vectors: s_norm={np.linalg.norm(s):.3f}, t_norm={np.linalg.norm(t):.3f}, g_norm={np.linalg.norm(g):.3f}")
         return {"s": s, "t": t, "g": g}
 
     def concat(self, parts: Dict[str, np.ndarray]) -> np.ndarray:

@@ -7,6 +7,9 @@ from ..tri_modal.hybrid_index import HybridIndex
 from ..tri_modal.reranker import TriModalReranker
 from ..tri_modal.weighting import StaticPolicy, HeuristicLLMPolicy
 from .base import AbstractRetriever
+from ..utils.logging import get_logger, log_time, ProgressLogger
+
+_log = get_logger("retriever.hybrid")
 
 class HybridRetriever(AbstractRetriever):
     def __init__(self,
@@ -74,24 +77,52 @@ class HybridRetriever(AbstractRetriever):
         self._doc_map: Dict[str, str] = {}  # doc_id -> texto
 
     def build_index(self, docs: List[Document]):
+        _log.info(f"🚀 Building Hybrid Index para {len(docs)} documentos")
+        
         # Fit com textos completos
-        self.vec.fit_corpus((d.title or "") + " " + (d.text or "") for d in docs)
+        texts = [(d.title or "") + " " + (d.text or "") for d in docs]
+        with log_time(_log, "Fit vectorizer no corpus"):
+            self.vec.fit_corpus(texts)
+        
         # Indexa
-        self.index.build((d.doc_id, (d.title or "") + " " + (d.text or "")) for d in docs)
+        doc_pairs = [(d.doc_id, (d.title or "") + " " + (d.text or "")) for d in docs]
+        with log_time(_log, "Build search index"):
+            self.index.build(doc_pairs)
+        
+        # Cache de textos para reranking
+        _log.info("💾 Criando cache de textos para reranking...")
         self._doc_map = {d.doc_id: (d.title or "") + " " + (d.text or "") for d in docs}
-        # salva cache de embeddings de entidade (se configurado)
+        
+        # Salva cache de embeddings de entidade (se configurado)
         try:
-            self.vec.entities.save_embedding_cache()
-        except Exception:
-            pass
+            with log_time(_log, "Salvando cache de embeddings"):
+                self.vec.entities.save_embedding_cache()
+        except Exception as e:
+            _log.debug(f"Cache de embeddings não salvo: {e}")
+        
+        _log.info(f"✅ Índice híbrido construído com sucesso!")
 
     def retrieve(self, queries: List[Query], k: int = 10) -> Dict[str, List[Tuple[str, float]]]:
+        _log.info(f"🔍 Iniciando retrieval: {len(queries)} queries, top-{k} (topk_first={self.topk_first})")
         results: Dict[str, List[Tuple[str, float]]] = {}
-        for q in queries:
-            q_vec = self.vec.concat(self.vec.encode_text(q.text, is_query=True))
-            candidates = self.index.search(q_vec, topk=self.topk_first)
-            cand_texts = [(doc_id, self._doc_map[doc_id]) for doc_id, _ in candidates]
-            w = self.policy.weights(q.text)
-            reranked = self.reranker.rescore(q.text, cand_texts, w)
-            results[q.query_id] = reranked[:k]
+        
+        with ProgressLogger(_log, "Retrieval", total=len(queries), log_every=max(1, len(queries)//10)) as progress:
+            for q in queries:
+                # Encode query
+                q_vec = self.vec.concat(self.vec.encode_text(q.text, is_query=True))
+                
+                # Fase 1: busca rápida
+                candidates = self.index.search(q_vec, topk=self.topk_first)
+                _log.debug(f"Query '{q.query_id[:20]}': {len(candidates)} candidatos da fase 1")
+                
+                # Fase 2: reranking com pesos adaptativos
+                cand_texts = [(doc_id, self._doc_map[doc_id]) for doc_id, _ in candidates]
+                w = self.policy.weights(q.text)
+                _log.debug(f"  Pesos: semantic={w[0]:.2f}, tfidf={w[1]:.2f}, entities={w[2]:.2f}")
+                reranked = self.reranker.rescore(q.text, cand_texts, w)
+                results[q.query_id] = reranked[:k]
+                
+                progress.update(1)
+        
+        _log.info(f"✅ Retrieval concluído: {len(results)} queries processadas")
         return results
