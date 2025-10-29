@@ -18,6 +18,9 @@ class NERConfig:
     batch_size: int = 64
     n_process: int = 1
     allowed_labels: Optional[List[str]] = None
+    # EntityRuler opcional: por padrão desativado e sem padrões embutidos
+    use_entity_ruler: bool = False
+    ruler_patterns: Optional[List[Dict]] = None
 
 @dataclass
 class CacheConfig:
@@ -171,7 +174,10 @@ class EntityEncoderReal:
             candidates += ["en_ner_bc5cdr_md", "en_ner_bionlp13cg_md", "en_core_sci_md"]
             for m in candidates:
                 try:
-                    nlp = spacy.load(m, disable=["tagger","parser","lemmatizer","textcat"])
+                    disable = ["tagger","lemmatizer","textcat"]
+                    if not cfg.use_noun_chunks:
+                        disable.append("parser")
+                    nlp = spacy.load(m, disable=disable)
                     break
                 except Exception:
                     continue
@@ -181,13 +187,70 @@ class EntityEncoderReal:
             candidates += ["en_core_web_trf", "en_core_web_md", "en_core_web_sm"]
             for m in candidates:
                 try:
-                    nlp = spacy.load(m, disable=["tagger","parser","lemmatizer","textcat"])
+                    disable = ["tagger","lemmatizer","textcat"]
+                    if not cfg.use_noun_chunks:
+                        disable.append("parser")
+                    nlp = spacy.load(m, disable=disable)
                     break
                 except Exception:
                     continue
 
         if nlp is None:
             warnings.warn("[EntityEncoder] Nenhum modelo spaCy carregado; usando extrator simples baseado em regex.")
+            return nlp
+
+        # Se noun_chunks for necessário e o parser não estiver ativo, tenta habilitar
+        try:
+            if cfg.use_noun_chunks and "parser" not in getattr(nlp, "pipe_names", []):
+                nlp.enable_pipe("parser")
+        except Exception:
+            pass
+
+        # EntityRuler opcional: apenas quando explicitamente solicitado e com padrões fornecidos
+        try:
+            if cfg.use_entity_ruler and cfg.ruler_patterns:
+                before = "ner" if "ner" in getattr(nlp, "pipe_names", []) else None
+                ruler = nlp.add_pipe("entity_ruler", before=before)
+                ruler.add_patterns(list(cfg.ruler_patterns))
+        except Exception as e:
+            warnings.warn(f"[EntityEncoder] Falha ao configurar EntityRuler: {e}")
+
+        return nlp
+
+        # Opcional: EntityRuler com padrões leves por domínio (finance/biomed) + custom
+        try:
+            if cfg.use_entity_ruler:
+                before = "ner" if "ner" in getattr(nlp, "pipe_names", []) else None
+                ruler = nlp.add_pipe("entity_ruler", before=before)
+                patterns: List[Dict] = []
+                if cfg.add_finance_rules:
+                    patterns += [
+                        {"label": "ORG", "pattern": "Federal Reserve"},
+                        {"label": "ORG", "pattern": "Fed"},
+                        {"label": "ORG", "pattern": "Nasdaq"},
+                        {"label": "ORG", "pattern": "Dow Jones"},
+                        {"label": "ORG", "pattern": "S&P 500"},
+                        {"label": "MONEY_TERM", "pattern": "interest rates"},
+                        {"label": "MONEY_TERM", "pattern": "equity market"},
+                    ]
+                    patterns += [{
+                        "label": "TICKER",
+                        "pattern": [{"TEXT": {"REGEX": "^[A-Z]{1,5}$"}}]
+                    }]
+                if cfg.add_biomed_rules:
+                    patterns += [
+                        {"label": "DISEASE_TERM", "pattern": "COVID-19"},
+                        {"label": "DISEASE_TERM", "pattern": "SARS-CoV-2"},
+                        {"label": "BIOMED_TERM", "pattern": "mRNA"},
+                        {"label": "BIOMED_TERM", "pattern": "clinical trials"},
+                    ]
+                if cfg.ruler_patterns:
+                    patterns += list(cfg.ruler_patterns)
+                if patterns:
+                    ruler.add_patterns(patterns)
+        except Exception as e:
+            warnings.warn(f"[EntityEncoder] Falha ao configurar EntityRuler: {e}")
+
         return nlp
 
     _simple_tok = re.compile(r"[A-Za-z][A-Za-z0-9_\-/\.]{1,}")
