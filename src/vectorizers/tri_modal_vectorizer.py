@@ -2,8 +2,8 @@ from __future__ import annotations
 import numpy as np
 from typing import Dict, Iterable, Optional, List
 from pathlib import Path
-from .encoders import HFSemanticEncoder, _StubSemanticEncoder, TfidfEncoder, l2norm
-from .entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
+from ..encoders.encoders import HFSemanticEncoder, _StubSemanticEncoder, TfidfEncoder, l2norm
+from ..encoders.entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
 from ..utils.logging import get_logger, log_time
 
 _log = get_logger("tri_modal.vectorizer")
@@ -116,3 +116,8 @@ class TriModalVectorizer:
     def concat(self, parts: Dict[str, np.ndarray]) -> np.ndarray:
         v = np.concatenate([parts["s"], parts["t"], parts["g"]]).astype(np.float32)
         return l2norm(v)
+
+    def total_dim(self) -> int:
+        return int(self.slice_dims.get("s", 0) + self.slice_dims.get("t", 0) + self.slice_dims.get("g", 0))
+
+

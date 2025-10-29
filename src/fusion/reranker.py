@@ -1,8 +1,8 @@
 from __future__ import annotations
 import numpy as np
 from typing import Dict, List, Tuple
-from .vectorizer import TriModalVectorizer
-from .encoders import l2norm
+from ..vectorizers.tri_modal_vectorizer import TriModalVectorizer
+from ..encoders.encoders import l2norm
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))

@@ -1,4 +1,3 @@
-# src/tri_modal/hybrid_index.py
 from __future__ import annotations
 import numpy as np
 from typing import List, Tuple, Dict, Iterable, Optional
@@ -13,7 +12,7 @@ try:
 except Exception:
     _HAS_FAISS = False
 
-from .vectorizer import TriModalVectorizer
+from ..vectorizers.tri_modal_vectorizer import TriModalVectorizer
 from ..utils.logging import get_logger, log_time, ProgressLogger
 
 _log = get_logger("tri_modal.index")

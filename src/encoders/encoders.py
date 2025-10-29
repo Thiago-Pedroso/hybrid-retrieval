@@ -3,8 +3,6 @@ import re
 import numpy as np
 from typing import Iterable, List, Dict, Optional, Callable
 
-# ========================= utilidades =========================
-
 _tok = re.compile(r"[A-Za-z0-9_]+")
 
 def _tokenize_basic(text: str) -> List[str]:
@@ -15,8 +13,6 @@ def _tokenize_basic(text: str) -> List[str]:
 def l2norm(x: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(x) + 1e-12
     return x / n
-
-# ========================= Semantic Encoders =========================
 
 class _StubSemanticEncoder:
     """Stub determinístico (hash) para fallback."""
@@ -126,8 +122,6 @@ class HFSemanticEncoder:
 
         # stub
         return self._stub.encode_text(text, is_query=is_query)
-
-# ========================= TF-IDF Encoders =========================
 
 class TfidfEncoder:
     """

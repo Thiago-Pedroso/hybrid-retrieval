@@ -45,8 +45,8 @@ if str(ROOT) not in sys.path:
 
 from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
 from src.eval.evaluator import evaluate_predictions
-from src.tri_modal.vectorizer import TriModalVectorizer
-from src.tri_modal.hybrid_index import HybridIndex
+from src.vectorizers.tri_modal_vectorizer import TriModalVectorizer
+from src.indexes.hybrid_index import HybridIndex
 from src.utils.io import ensure_dir
 from src.utils.logging import get_logger
 

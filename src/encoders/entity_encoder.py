@@ -1,4 +1,3 @@
-# src/tri_modal/entity_encoder.py
 from __future__ import annotations
 from typing import Iterable, Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -157,8 +156,6 @@ class EntityEncoderReal:
                 if self._emb_cache:
                     _log.debug(f"✓ Cache carregado: {len(self._emb_cache)} embeddings em memória")
 
-    # ------------------------ NER loading ------------------------
-
     def _load_nlp(self, cfg: NERConfig):
         if cfg.backend == "none":
             return None
@@ -167,7 +164,7 @@ class EntityEncoderReal:
         except Exception:
             warnings.warn("[EntityEncoder] spaCy não instalado; caindo para extrator simples.")
             return None
-
+        
         nlp = None
         if cfg.backend == "scispacy":
             candidates = [cfg.model] if cfg.model else []
@@ -192,8 +189,6 @@ class EntityEncoderReal:
         if nlp is None:
             warnings.warn("[EntityEncoder] Nenhum modelo spaCy carregado; usando extrator simples baseado em regex.")
         return nlp
-
-    # ------------------------ extração de entidades ------------------------
 
     _simple_tok = re.compile(r"[A-Za-z][A-Za-z0-9_\-/\.]{1,}")
 
@@ -259,8 +254,6 @@ class EntityEncoderReal:
             out.append(self._extract_entities_from_doc(doc))
         return out
 
-    # ------------------------ fit: calcula IDF ------------------------
-
     def fit(self, corpus_texts: Iterable[str]):
         if self._idf_path and self._idf_path.exists() and not self.cache.force_rebuild:
             self._fitted = True
@@ -316,8 +309,6 @@ class EntityEncoderReal:
         self._fitted = True
         _log.info(f"✓ NER fit concluído: {len(self.ent2idf)} entidades únicas (min_df={self.min_df})")
         self._try_save_idf()
-
-    # ------------------------ encode: TF-IDF * emb(entity) ------------------------
 
     def _get_emb(self, ent: str) -> np.ndarray:
         v = self._emb_cache.get(ent)
@@ -376,8 +367,6 @@ class EntityEncoderReal:
             w = float(f) * self.ent2idf[e]
             acc += w * self._get_emb(e)
         return l2norm(acc)
-
-    # ------------------------ persistência ------------------------
 
     def _try_load_cache(self):
         try:

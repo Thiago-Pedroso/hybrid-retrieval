@@ -2,10 +2,10 @@ from __future__ import annotations
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 from ..datasets.schema import Document, Query
-from ..tri_modal.vectorizer import TriModalVectorizer
-from ..tri_modal.hybrid_index import HybridIndex
-from ..tri_modal.reranker import TriModalReranker
-from ..tri_modal.weighting import StaticPolicy, HeuristicLLMPolicy
+from ..vectorizers.tri_modal_vectorizer import TriModalVectorizer
+from ..indexes.hybrid_index import HybridIndex
+from ..fusion.reranker import TriModalReranker
+from ..fusion.weighting import StaticPolicy, HeuristicLLMPolicy
 from .base import AbstractRetriever
 from ..utils.logging import get_logger, log_time, ProgressLogger
 
