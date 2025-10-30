@@ -13,15 +13,15 @@ Exemplos:
 
 from __future__ import annotations
 
-# PROTEÇÃO: Configura threading ANTES de importar numpy/torch para evitar segfault no Mac
-import os
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
-# Mac M1: usa 'spawn' ao invés de 'fork' para evitar segfault
-os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+import os, platform
+# PROTEÇÃO: Apenas em macOS (M1/M2) limitamos threads e habilitamos MPS fallback
+if platform.system() == 'Darwin':
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import argparse
 import sys
@@ -90,6 +90,7 @@ def dataset_stats_both(dataset_root: Path) -> Dict[str, int]:
 
 def _run_once(
     dataset_root: Path,
+    qrels_path: Optional[Path],
     semantic_model: str,
     graph_model: str,
     tfidf_dim: int,
@@ -108,6 +109,17 @@ def _run_once(
 ) -> Tuple[pd.DataFrame, Dict[str, List[Tuple[str, float]]]]:
     """Executa a fase pré-rerank (índice híbrido) para um modelo semântico."""
     corpus, queries, qrels = load_beir_dataset(dataset_root)
+    # Qrels custom opcional
+    if qrels_path:
+        qp = Path(qrels_path)
+        if qp.suffix.lower() == ".jsonl":
+            qrels = pd.read_json(qp, lines=True)
+        elif qp.suffix.lower() == ".parquet":
+            qrels = pd.read_parquet(qp, engine="pyarrow")
+        else:
+            raise ValueError(f"Formato não suportado para qrels: {qp}")
+        qrels["doc_id"] = qrels["doc_id"].astype(str)
+        qrels["query_id"] = qrels["query_id"].astype(str)
     # split preferido: test > dev/validation > train
     split = select_split(qrels, ("test", "dev", "validation", "train"))
     split_eval = "test" if "test" in set(qrels["split"]) else split
@@ -190,6 +202,8 @@ def parse_args():
                    help="Se quiser informar o caminho exato do dataset (prioriza sobre --dataset).")
     g.add_argument("--all", action="store_true", default=False, help="Roda A/B em todos os datasets.")
     g.add_argument("--k", type=int, default=10, help="k para métricas @k")
+    g.add_argument("--qrels-path", type=str, default="",
+                   help="Opcional: caminho para qrels custom (jsonl/parquet) com coluna 'split'.")
 
     # modelos
     m = p.add_argument_group("Modelos")
@@ -267,6 +281,7 @@ def main_one_dataset(ds_name: str, ds_root: Path, args) -> pd.DataFrame:
     for sem_model in (args.semantic_a, args.semantic_b):
         metrics, _ = _run_once(
             dataset_root=ds_root,
+            qrels_path=(Path(args.qrels_path).resolve() if args.qrels_path else None),
             semantic_model=sem_model,
             graph_model=args.graph_model,
             tfidf_dim=args.tfidf_dim,

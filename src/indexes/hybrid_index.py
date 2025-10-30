@@ -94,13 +94,14 @@ class HybridIndex:
         n_docs = len(doc_list)
         _log.info(f"🏗️  Construindo índice híbrido para {n_docs} documentos")
         
-        # PROTEÇÃO: Limita threads para evitar segfault no Mac M1
-        import os
-        os.environ["OMP_NUM_THREADS"] = "1"
-        os.environ["MKL_NUM_THREADS"] = "1"
-        os.environ["OPENBLAS_NUM_THREADS"] = "1"
-        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-        os.environ["NUMEXPR_NUM_THREADS"] = "1"
+        # PROTEÇÃO: Limita threads para evitar segfault apenas no macOS
+        import os, platform
+        if platform.system() == 'Darwin':
+            os.environ["OMP_NUM_THREADS"] = "1"
+            os.environ["MKL_NUM_THREADS"] = "1"
+            os.environ["OPENBLAS_NUM_THREADS"] = "1"
+            os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+            os.environ["NUMEXPR_NUM_THREADS"] = "1"
         
         ids = []
         vecs = []

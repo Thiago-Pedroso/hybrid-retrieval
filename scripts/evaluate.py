@@ -12,6 +12,7 @@ def parse_args():
     p.add_argument("--dataset-root", type=str, required=True)
     p.add_argument("--predictions", type=str, required=True)
     p.add_argument("--split", type=str, default=None, help="Se None, usa preferências do arquivo qrels")
+    p.add_argument("--qrels-path", type=str, default=None, help="Opcional: caminho para qrels custom (jsonl ou parquet) com coluna split")
     p.add_argument("--ks", type=str, default="1,3,5,10")
     p.add_argument("--out", type=str, default="./outputs/metrics.csv")
     return p.parse_args()
@@ -22,7 +23,20 @@ def main():
     root = Path(args.dataset_root)
     ks = [int(x.strip()) for x in args.ks.split(",") if x.strip()]
 
+    # Carrega dataset
     corpus, queries, qrels = load_beir_dataset(root)
+    # Qrels custom opcional
+    if args.qrels_path:
+        qp = Path(args.qrels_path)
+        if qp.suffix.lower() == ".jsonl":
+            qrels = pd.read_json(qp, lines=True)
+        elif qp.suffix.lower() == ".parquet":
+            qrels = pd.read_parquet(qp, engine="pyarrow")
+        else:
+            raise ValueError(f"Formato não suportado para qrels: {qp}")
+        # Normalizações mínimas
+        qrels["doc_id"] = qrels["doc_id"].astype(str)
+        qrels["query_id"] = qrels["query_id"].astype(str)
     split = args.split or select_split(qrels)
     qrels_split = qrels[qrels["split"] == split].copy()
     log.info(f"Avaliando contra split={split} | qrels linhas={len(qrels_split)}")
