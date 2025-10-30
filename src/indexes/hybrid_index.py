@@ -46,6 +46,8 @@ class HybridIndex:
         self.doc_ids: List[str] = []
         self.doc_mat: np.ndarray = np.zeros((0, 1), dtype=np.float32)
         self.index = None
+        # Índice GPU (quando disponível). Mantém cópia CPU para persistência.
+        self._gpu_index = None
 
         self.faiss_factory = faiss_factory
         self.faiss_metric = faiss_metric
@@ -148,6 +150,14 @@ class HybridIndex:
                     self.index = faiss.IndexFlatIP(d)
                     self.index.add(self.doc_mat)
                 _log.info(f"  ✓ FAISS IndexFlatIP: {self.index.ntotal} vetores, dim={d}")
+                # Tenta criar cópia na GPU para acelerar busca
+                try:
+                    if faiss.get_num_gpus() > 0:
+                        res = faiss.StandardGpuResources()
+                        self._gpu_index = faiss.index_cpu_to_gpu(res, 0, self.index)
+                        _log.info("  ✓ GPU index criado (FlatIP)")
+                except Exception as e:
+                    _log.debug(f"GPU FAISS indisponível: {e}")
             else:
                 self.index = None  # fallback NumPy
                 _log.warning("  ⚠️  FAISS não disponível, usando NumPy fallback")
@@ -176,7 +186,18 @@ class HybridIndex:
         if self.faiss_nprobe:
             _set_nprobe(self.index, int(self.faiss_nprobe))
 
-        # salva índice
+        # Cria índice GPU (opcional) para acelerar busca
+        try:
+            if faiss.get_num_gpus() > 0:
+                res = faiss.StandardGpuResources()
+                self._gpu_index = faiss.index_cpu_to_gpu(res, 0, self.index)
+                if self.faiss_nprobe:
+                    _set_nprobe(self._gpu_index, int(self.faiss_nprobe))
+                _log.info("  ✓ GPU index criado (factory)")
+        except Exception as e:
+            _log.debug(f"GPU FAISS indisponível: {e}")
+
+        # salva índice (CPU)
         self._save()
 
     # ------------------------ search ------------------------
@@ -185,8 +206,9 @@ class HybridIndex:
         q = query_vec.reshape(1, -1).astype(np.float32)
         _log.debug(f"Buscando top-{topk} candidatos (query vec shape={q.shape})")
         
-        if _HAS_FAISS and self.index is not None:
-            scores, idx = self.index.search(q, topk)
+        if _HAS_FAISS and (self._gpu_index is not None or self.index is not None):
+            idx_obj = self._gpu_index if self._gpu_index is not None else self.index
+            scores, idx = idx_obj.search(q, topk)
             idx = idx[0].tolist()
             scores = scores[0].tolist()
             _log.debug(f"FAISS search concluído: top score={scores[0]:.4f}, min score={scores[-1]:.4f}")
