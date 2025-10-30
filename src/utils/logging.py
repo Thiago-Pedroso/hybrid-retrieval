@@ -239,10 +239,21 @@ class ProgressLogger:
             elapsed = time.perf_counter() - self.start_time
             rate = self.count / elapsed if elapsed > 0 else 0
             pct = (self.count / self.total * 100) if self.total > 0 else 0
+            # ETA simples
+            remaining = max(self.total - self.count, 0)
+            eta_sec = (remaining / rate) if rate > 0 else float('inf')
+            if eta_sec == float('inf'):
+                eta_str = "--"
+            elif eta_sec < 60:
+                eta_str = f"{eta_sec:.1f}s"
+            elif eta_sec < 3600:
+                eta_str = f"{int(eta_sec//60)}m {eta_sec%60:.0f}s"
+            else:
+                eta_str = f"{int(eta_sec//3600)}h {int((eta_sec%3600)//60)}m"
             
             self.logger.info(
                 f"{self.operation}: {self.count}/{self.total} ({pct:.1f}%) "
-                f"@ {rate:.1f} it/s"
+                f"@ {rate:.1f} it/s | ETA {eta_str}"
             )
     
     def __enter__(self):

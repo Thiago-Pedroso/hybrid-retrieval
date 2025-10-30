@@ -112,7 +112,8 @@ class HybridIndex:
         import gc
         BATCH_SIZE = 100
         
-        with ProgressLogger(_log, "Encoding documents", total=n_docs, log_every=max(1, n_docs // 10)) as progress:
+        # Loga progresso mais frequente (≈2% do total, mínimo 25 items)
+        with ProgressLogger(_log, "Encoding documents", total=n_docs, log_every=max(25, max(1, n_docs // 50))) as progress:
             for i, (doc_id, text) in enumerate(doc_list):
                 try:
                     parts = self.vec.encode_text(text, is_query=False)
@@ -166,7 +167,8 @@ class HybridIndex:
         # IndexFactory real
         d = self.doc_mat.shape[1]
         metric = faiss.METRIC_INNER_PRODUCT if self.faiss_metric.lower() == "ip" else faiss.METRIC_L2
-        self.index = faiss.index_factory(d, self.faiss_factory, metric)
+        with log_time(_log, f"Criando índice FAISS (factory='{self.faiss_factory}')"):
+            self.index = faiss.index_factory(d, self.faiss_factory, metric)
 
         # train se necessário
         if hasattr(self.index, "is_trained") and not self.index.is_trained:
@@ -180,9 +182,14 @@ class HybridIndex:
             rng = np.random.default_rng(42)
             idx = rng.choice(N, size=train_n, replace=False)
             train_vecs = self.doc_mat[idx]
-            self.index.train(train_vecs)
+            with ProgressLogger(_log, f"Treinando índice (nlist={nlist}, train_n={train_n})", total=train_n, log_every=max(1000, train_n // 10)) as p:
+                # Loga apenas progresso simbólico (1 passo = 1k vetores) para feedback visual
+                with log_time(_log, "FAISS train"):
+                    self.index.train(train_vecs)
+                p.update(train_n)
 
-        self.index.add(self.doc_mat)
+        with log_time(_log, f"Adicionando {self.doc_mat.shape[0]} vetores ao índice"):
+            self.index.add(self.doc_mat)
         if self.faiss_nprobe:
             _set_nprobe(self.index, int(self.faiss_nprobe))
 
