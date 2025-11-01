@@ -43,8 +43,8 @@ def parse_args():
     p.add_argument("--ner-allowed-labels", dest="ner_allowed_labels", type=str, default="",
                    help='CSV de labels aceitas (ex.: "DISEASE,CHEMICAL"). Vazio = sem filtro.')
     p.add_argument("--ner-use-noun-chunks", dest="ner_use_noun_chunks", action="store_true", default=True)
-    p.add_argument("--ner-batch-size", dest="ner_batch_size", type=int, default=64)
-    p.add_argument("--ner-n-process", dest="ner_n_process", type=int, default=1)
+    p.add_argument("--ner-batch-size", dest="ner_batch_size", type=int, default=128)
+    p.add_argument("--ner-n-process", dest="ner_n_process", type=int, default=4)
     p.add_argument("--entity-artifacts", dest="entity_artifact_dir", type=str, default="",
                    help="Pasta para cachear IDF/embeddings de entidade")
     p.add_argument("--entity-force-rebuild", dest="entity_force_rebuild", action="store_true", default=False)

@@ -14,13 +14,7 @@ Exemplos:
 from __future__ import annotations
 
 import os, platform
-# PROTEÇÃO: Apenas em macOS (M1/M2) limitamos threads e habilitamos MPS fallback
 if platform.system() == 'Darwin':
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    os.environ["OPENBLAS_NUM_THREADS"] = "1"
-    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-    os.environ["NUMEXPR_NUM_THREADS"] = "1"
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import argparse
@@ -30,12 +24,11 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import pandas as pd
 
-# Configura multiprocessing para Mac M1
 import multiprocessing
 try:
     multiprocessing.set_start_method('spawn', force=True)
 except RuntimeError:
-    pass  # Já foi configurado
+    pass
 
 # --- torna o repo importável mesmo se chamado de qualquer lugar
 THIS = Path(__file__).resolve()
@@ -145,8 +138,8 @@ def _run_once(
         ner_backend=ner_kwargs["ner_backend"],
         ner_model=ner_kwargs["ner_model"],
         ner_allowed_labels=ner_kwargs["ner_allowed_labels"],
-        ner_batch_size=ner_batch_size,         # Otimizado para Mac M1 8GB
-        ner_n_process=ner_n_process,           # Recomendado: 1 para Mac M1
+        ner_batch_size=ner_batch_size,
+        ner_n_process=ner_n_process,
         entity_artifact_dir=str(entity_artifacts) if entity_artifacts else None,
         entity_force_rebuild=entity_force_rebuild,
         device=device,
@@ -217,12 +210,11 @@ def parse_args():
     m.add_argument("--tfidf-backend", type=str, choices=["sklearn", "pyserini"], default="sklearn")
     m.add_argument("--device", type=str, default=None, help="ex.: cuda:0 ou cpu")
     
-    # NER/Entities (otimizado para Mac M1 8GB)
     n = p.add_argument_group("NER e Entidades")
-    n.add_argument("--ner-batch-size", type=int, default=8,
-                   help="Batch size para NER (default=8, otimizado para RAM limitada)")
-    n.add_argument("--ner-n-process", type=int, default=1,
-                   help="Processos paralelos para NER (default=1, recomendado para Mac M1)")
+    n.add_argument("--ner-batch-size", type=int, default=32,
+                   help="Batch size para NER")
+    n.add_argument("--ner-n-process", type=int, default=4,
+                   help="Processos paralelos para NER")
 
     # artefatos/caches
     a = p.add_argument_group("Artefatos")

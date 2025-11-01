@@ -15,8 +15,8 @@ class NERConfig:
     backend: str = "scispacy"      # "scispacy" | "spacy" | "none"
     model: Optional[str] = None
     use_noun_chunks: bool = True
-    batch_size: int = 64
-    n_process: int = 1
+    batch_size: int = 128
+    n_process: int = 4
     allowed_labels: Optional[List[str]] = None
     # EntityRuler opcional: por padrão desativado e sem padrões embutidos
     use_entity_ruler: bool = False
@@ -302,18 +302,8 @@ class EntityEncoderReal:
             return [self._extract_simple(t) for t in texts]
         out: List[List[str]] = []
         
-        # PROTEÇÃO Mac M1: Força n_process=1 para evitar segfault
-        # Mac M1 com multiprocessing 'fork' + spaCy causa crash
-        import platform
-        n_proc = 1 if platform.system() == 'Darwin' else self.ner_cfg.n_process
-        
-        if n_proc != self.ner_cfg.n_process:
-            import logging
-            _log = logging.getLogger("entity_encoder")
-            _log.warning(f"⚠️  Mac detectado: usando n_process=1 (era {self.ner_cfg.n_process}) para evitar segfault")
-        
         for doc in self._nlp.pipe(texts, batch_size=self.ner_cfg.batch_size,
-                                  n_process=n_proc, disable=[]):
+                                  n_process=self.ner_cfg.n_process, disable=[]):
             out.append(self._extract_entities_from_doc(doc))
         return out
 
@@ -338,13 +328,10 @@ class EntityEncoderReal:
             self._fitted = True
             return
 
-        # === OTIMIZAÇÃO DE MEMÓRIA: Processa em chunks para Mac M1 8GB ===
-        import gc
         import logging
         _log = logging.getLogger("entity_encoder")
         
-        # Chunk size otimizado para 8GB RAM (SciFact ~5k docs)
-        CHUNK_SIZE = 500  # Processa 500 docs por vez (~1.5GB RAM peak)
+        CHUNK_SIZE = 2000
         total = len(texts)
         
         _log.info(f"📊 NER fit: processando {total} documentos em chunks de {CHUNK_SIZE}")
@@ -354,16 +341,11 @@ class EntityEncoderReal:
             chunk_end = min(chunk_start + CHUNK_SIZE, total)
             chunk = texts[chunk_start:chunk_end]
             
-            # Processa chunk
             for ents in self._extract_entities_batch(chunk):
                 N += 1
                 for e in set(ents):
                     df[e] = df.get(e, 0) + 1
             
-            # Libera memória entre chunks (crítico para Mac M1 8GB)
-            gc.collect()
-            
-            # Log de progresso a cada 1000 docs ou último chunk
             if chunk_end % 1000 == 0 or chunk_end == total:
                 _log.info(f"   Processados: {chunk_end}/{total} docs ({chunk_end*100//total}%)")
 

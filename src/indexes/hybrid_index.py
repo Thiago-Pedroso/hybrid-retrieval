@@ -96,23 +96,11 @@ class HybridIndex:
         n_docs = len(doc_list)
         _log.info(f"🏗️  Construindo índice híbrido para {n_docs} documentos")
         
-        # PROTEÇÃO: Limita threads para evitar segfault apenas no macOS
-        import os, platform
-        if platform.system() == 'Darwin':
-            os.environ["OMP_NUM_THREADS"] = "1"
-            os.environ["MKL_NUM_THREADS"] = "1"
-            os.environ["OPENBLAS_NUM_THREADS"] = "1"
-            os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-            os.environ["NUMEXPR_NUM_THREADS"] = "1"
-        
         ids = []
         vecs = []
         
-        # Processa em mini-batches para evitar memory issues
-        import gc
-        BATCH_SIZE = 100
+        BATCH_SIZE = 500
         
-        # Loga progresso mais frequente (≈2% do total, mínimo 25 items)
         with ProgressLogger(_log, "Encoding documents", total=n_docs, log_every=max(25, max(1, n_docs // 50))) as progress:
             for i, (doc_id, text) in enumerate(doc_list):
                 try:
@@ -121,13 +109,8 @@ class HybridIndex:
                     ids.append(doc_id)
                     vecs.append(v)
                     progress.update(1)
-                    
-                    # Garbage collection a cada batch
-                    if (i + 1) % BATCH_SIZE == 0:
-                        gc.collect()
                 except Exception as e:
                     _log.error(f"Erro ao encodar doc {doc_id}: {e}")
-                    # Continua com vetor zero em caso de erro
                     v = np.zeros(self.vec.total_dim(), dtype=np.float32)
                     ids.append(doc_id)
                     vecs.append(v)
