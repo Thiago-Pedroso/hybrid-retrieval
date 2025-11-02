@@ -26,7 +26,6 @@ def parse_args():
                    help="Se fornecido, salva logs em arquivo (ex: ./logs/run.log)")
 
     # semântico
-    p.add_argument("--semantic-backend", type=str, choices=["hf","stub"], default="hf")
     p.add_argument("--semantic-model", type=str, default="sentence-transformers/all-MiniLM-L6-v2")
     p.add_argument("--query-prefix", type=str, default="")
     p.add_argument("--doc-prefix", type=str, default="")
@@ -100,9 +99,7 @@ def main():
     if args.retriever == "hybrid":
         allowed_labels = [s.strip() for s in args.ner_allowed_labels.split(",") if s.strip()] if args.ner_allowed_labels else None
         retr = HybridRetriever(
-            sem_dim=args.sem_dim,
             tfidf_dim=args.tfidf_dim,
-            semantic_backend=args.semantic_backend,
             semantic_model_name=args.semantic_model,
             tfidf_backend=args.tfidf_backend,
             query_prefix=args.query_prefix,

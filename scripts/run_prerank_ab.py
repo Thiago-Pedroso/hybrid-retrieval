@@ -132,7 +132,6 @@ def _run_once(
     # tfidf_dim: 0 = vocabulário ilimitado, >0 = max_features
     tfidf_dim_val = None if tfidf_dim == 0 else tfidf_dim
     vec = TriModalVectorizer(
-        semantic_backend="hf",
         semantic_model_name=semantic_model,    # A ou B
         tfidf_backend=tfidf_backend,
         tfidf_dim=tfidf_dim_val,

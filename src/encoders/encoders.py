@@ -14,27 +14,6 @@ def l2norm(x: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(x) + 1e-12
     return x / n
 
-class _StubSemanticEncoder:
-    """Stub determinístico (hash) para fallback."""
-    def __init__(self, dim: int = 384, seed: int = 42, **kwargs):
-        self.dim = dim
-        self.seed = seed
-
-    def _tok_vec(self, tok: str) -> np.ndarray:
-        h = abs(hash((tok, self.seed))) % (2**32)
-        _rng_local = np.random.default_rng(h)
-        v = _rng_local.standard_normal(self.dim).astype(np.float32)
-        return v
-
-    def encode_text(self, text: str, is_query: bool = False) -> np.ndarray:
-        toks = _tokenize_basic(text)
-        if not toks:
-            return np.zeros(self.dim, dtype=np.float32)
-        acc = np.zeros(self.dim, dtype=np.float32)
-        for t in toks[:128]:
-            acc += self._tok_vec(t)
-        return l2norm(acc)
-
 class HFSemanticEncoder:
     """
     Encoder semântico real baseado em Hugging Face.
@@ -85,10 +64,12 @@ class HFSemanticEncoder:
                 self._torch = torch
                 self.dim = int(self._model.config.hidden_size)
                 self._backend = "hf"
-            except Exception:
-                # último recurso: stub
-                self._backend = "stub"
-                self._stub = _StubSemanticEncoder(dim=384)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Falha ao carregar modelo semântico '{model_name}'. "
+                    "Certifique-se de que 'sentence-transformers' ou 'transformers' estão instalados. "
+                    "Instale com: pip install sentence-transformers transformers torch"
+                ) from e
 
     def _mean_pool(self, last_hidden_state, attention_mask):
         mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
@@ -120,8 +101,7 @@ class HFSemanticEncoder:
                 vec = pooled.squeeze(0).cpu().numpy().astype(np.float32)
             return l2norm(vec) if self.normalize else vec
 
-        # stub
-        return self._stub.encode_text(text, is_query=is_query)
+        raise RuntimeError(f"Backend '{self._backend}' não suportado. Modelo não foi carregado corretamente.")
 
 class TfidfEncoder:
     """

@@ -31,7 +31,7 @@ def main():
 
     # instância do retriever
     if args.retriever == "hybrid":
-        retr = HybridRetriever(sem_dim=args.sem_dim, tfidf_dim=args.tfidf_dim)
+        retr = HybridRetriever(tfidf_dim=args.tfidf_dim)
     elif args.retriever == "dense":
         retr = DenseFaissStub(dim=args.sem_dim)
     else:

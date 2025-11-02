@@ -13,12 +13,10 @@ _log = get_logger("retriever.hybrid")
 
 class HybridRetriever(AbstractRetriever):
     def __init__(self,
-                 sem_dim: Optional[int] = None,
                  tfidf_dim: int = 1000,
                  topk_first: int = 150,
                  policy: str = "heuristic",
                  # SEMÂNTICO
-                 semantic_backend: str = "hf",
                  semantic_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  query_prefix: str = "",
                  doc_prefix: str = "",
@@ -44,9 +42,7 @@ class HybridRetriever(AbstractRetriever):
                  index_artifact_dir: Optional[str] = None,
                  index_name: str = "hybrid.index"):
         self.vec = TriModalVectorizer(
-            sem_dim=sem_dim,
             tfidf_dim=tfidf_dim,
-            semantic_backend=semantic_backend,
             semantic_model_name=semantic_model_name,
             tfidf_backend=tfidf_backend,
             query_prefix=query_prefix,

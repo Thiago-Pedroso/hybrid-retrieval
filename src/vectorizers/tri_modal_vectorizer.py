@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 from typing import Dict, Iterable, Optional, List
 from pathlib import Path
-from ..encoders.encoders import HFSemanticEncoder, _StubSemanticEncoder, TfidfEncoder, l2norm
+from ..encoders.encoders import HFSemanticEncoder, TfidfEncoder, l2norm
 from ..encoders.entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
 from ..utils.logging import get_logger, log_time
 
@@ -10,11 +10,8 @@ _log = get_logger("tri_modal.vectorizer")
 
 class TriModalVectorizer:
     def __init__(self,
-                 sem_dim: Optional[int] = None,
                  tfidf_dim: int = 1000,
-                 seed: int = 42,
                  min_df: int = 2,
-                 semantic_backend: str = "hf",
                  semantic_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  tfidf_backend: str = "sklearn",
                  query_prefix: str = "",
@@ -31,17 +28,12 @@ class TriModalVectorizer:
                  entity_force_rebuild: bool = False,
                  device: Optional[str] = None):
         # semântico (s)
-        if semantic_backend == "hf":
-            self.semantic = HFSemanticEncoder(
-                model_name=semantic_model_name,
-                device=device,
-                query_prefix=query_prefix,
-                doc_prefix=doc_prefix,
-            )
-            sem_out_dim = int(self.semantic.dim or 384)
-        else:
-            self.semantic = _StubSemanticEncoder(dim=sem_dim or 384, seed=seed)
-            sem_out_dim = self.semantic.dim
+        self.semantic = HFSemanticEncoder(
+            model_name=semantic_model_name,
+            device=device,
+            query_prefix=query_prefix,
+            doc_prefix=doc_prefix,
+        )
 
         # lexical (t)
         self.tfidf = TfidfEncoder(dim=tfidf_dim, min_df=min_df, backend=tfidf_backend)

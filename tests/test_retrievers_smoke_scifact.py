@@ -45,7 +45,7 @@ def test_dense_smoke():
 
 def test_hybrid_smoke():
     docs, qlist = _prep_scifact_subset()
-    retr = HybridRetriever(sem_dim=128, tfidf_dim=256, topk_first=50, policy="heuristic")
+    retr = HybridRetriever(tfidf_dim=256, topk_first=50, policy="heuristic")
     retr.build_index(docs)
     res = retr.retrieve(qlist, k=10)
     _assert_k(res, qlist, 10)

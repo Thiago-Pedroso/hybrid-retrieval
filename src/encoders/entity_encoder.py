@@ -8,7 +8,7 @@ import json
 import warnings
 import hashlib
 
-from .encoders import HFSemanticEncoder, _StubSemanticEncoder, l2norm
+from .encoders import HFSemanticEncoder, l2norm
 
 @dataclass
 class NERConfig:
@@ -60,39 +60,13 @@ class EntityEncoderReal:
         import logging
         _log = logging.getLogger("entity_encoder.init")
         
-        try:
-            _log.info(f"🔄 Carregando modelo de embeddings: {graph_model_name}")
-            self.embedder = HFSemanticEncoder(model_name=graph_model_name, device=device)
-            self.dim = int(self.embedder.dim or 1024)
-            self._is_stub = False
-            _log.info(f"✓ Modelo carregado: dim={self.dim}, device={device or 'cpu'}")
-        except Exception as e:
-            _log.error(f"❌ Falha ao carregar {graph_model_name}: {type(e).__name__}: {e}")
-            _log.error("⚠️  Usando stub encoder (384d) - RESULTADOS PODEM SER DIFERENTES!")
-            _log.error("    Instale: pip install sentence-transformers transformers torch")
-            warnings.warn(f"[EntityEncoder] Falling back to stub: {e}")
-            self.embedder = _StubSemanticEncoder(dim=384)
-            self.dim = self.embedder.dim
-            self._is_stub = True
+        _log.info(f"🔄 Carregando modelo de embeddings: {graph_model_name}")
+        self.embedder = HFSemanticEncoder(model_name=graph_model_name, device=device)
+        self.dim = int(self.embedder.dim or 1024)
+        _log.info(f"✓ Modelo carregado: dim={self.dim}, device={device or 'cpu'}")
 
         # assinatura do cache: modelo + dim
         self._emb_signature = _safe_name(f"{self.model_name}_{self.dim}")
-        
-        # VALIDAÇÃO CRÍTICA: Se usou stub mas esperava modelo real, PARE!
-        if self._is_stub and "stub" not in graph_model_name.lower():
-            raise RuntimeError(
-                f"\n{'='*80}\n"
-                f"ERRO CRÍTICO: Modelo '{graph_model_name}' não pôde ser carregado!\n"
-                f"Está usando stub (384d) ao invés do modelo real (1024d).\n\n"
-                f"CAUSA PROVÁVEL:\n"
-                f"  1. Biblioteca não instalada: pip install sentence-transformers transformers torch\n"
-                f"  2. Modelo não encontrado localmente e sem internet\n"
-                f"  3. Erro de inicialização (veja logs acima)\n\n"
-                f"SOLUÇÃO:\n"
-                f"  pip install sentence-transformers transformers torch\n"
-                f"  ou use --graph-model 'stub' se quiser usar o fallback intencionalmente\n"
-                f"{'='*80}\n"
-            )
 
         # NER
         self.ner_cfg = ner or NERConfig()
