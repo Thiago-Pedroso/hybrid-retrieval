@@ -87,6 +87,7 @@ def _run_once(
     semantic_model: str,
     graph_model: str,
     tfidf_dim: int,
+    min_df: int,
     tfidf_backend: str,
     device: Optional[str],
     entity_artifacts: Optional[Path],
@@ -128,11 +129,14 @@ def _run_once(
     ner_kwargs = _ner_defaults_for(ds_name)
 
     # vetorizer tri-modal
+    # tfidf_dim: 0 = vocabulário ilimitado, >0 = max_features
+    tfidf_dim_val = None if tfidf_dim == 0 else tfidf_dim
     vec = TriModalVectorizer(
         semantic_backend="hf",
         semantic_model_name=semantic_model,    # A ou B
         tfidf_backend=tfidf_backend,
-        tfidf_dim=tfidf_dim,
+        tfidf_dim=tfidf_dim_val,
+        min_df=min_df,
         query_prefix="", doc_prefix="",
         graph_model_name=graph_model,          # BGE-Large no slice g
         ner_backend=ner_kwargs["ner_backend"],
@@ -206,7 +210,10 @@ def parse_args():
                    help="Modelo semântico B (BGE-Large por padrão).")
     m.add_argument("--graph-model", type=str, default="BAAI/bge-large-en-v1.5",
                    help="Modelo para embutir entidades (slice g).")
-    m.add_argument("--tfidf-dim", type=int, default=1000)
+    m.add_argument("--tfidf-dim", type=int, default=1000,
+                   help="Dimensão do TF-IDF (max_features). Use 0 para vocabulário ilimitado.")
+    m.add_argument("--tfidf-min-df", type=int, default=2,
+                   help="Min document frequency para TF-IDF (default: 2).")
     m.add_argument("--tfidf-backend", type=str, choices=["sklearn", "pyserini"], default="sklearn")
     m.add_argument("--device", type=str, default=None, help="ex.: cuda:0 ou cpu")
     
@@ -277,6 +284,7 @@ def main_one_dataset(ds_name: str, ds_root: Path, args) -> pd.DataFrame:
             semantic_model=sem_model,
             graph_model=args.graph_model,
             tfidf_dim=args.tfidf_dim,
+            min_df=args.tfidf_min_df,
             tfidf_backend=args.tfidf_backend,
             device=args.device,
             entity_artifacts=ent_dir,
