@@ -107,10 +107,20 @@ class TriModalVectorizer:
     def encode_text(self, text: str, is_query: bool = False) -> Dict[str, np.ndarray]:
         assert self.fitted, "Chame fit_corpus() antes de encode_text()"
         _log.debug(f"Encoding {'query' if is_query else 'document'}: {text[:100]}...")
-        s = l2norm(self._encode_semantic(text, is_query=is_query))
-        t = l2norm(self._encode_tfidf(text))
-        g = l2norm(self._encode_entities(text))
-        _log.debug(f"Encoded vectors: s_norm={np.linalg.norm(s):.3f}, t_norm={np.linalg.norm(t):.3f}, g_norm={np.linalg.norm(g):.3f}")
+        
+        s = self._encode_semantic(text, is_query=is_query)
+        t = self._encode_tfidf(text)
+        g = self._encode_entities(text)
+        
+        # Escalonamento do TF-IDF: t' = t̂_d * √(D_s / D_t)
+        D_s = self.slice_dims["s"]
+        D_t = self.slice_dims["t"]
+        scale_factor = 1.0  # Default: sem escalonamento
+        if D_t > 0 and t.size > 0:
+            scale_factor = np.sqrt(float(D_s) / float(D_t))
+            t = t * scale_factor
+        
+        _log.debug(f"Encoded vectors: s_norm={np.linalg.norm(s):.3f}, t_norm={np.linalg.norm(t):.3f}, g_norm={np.linalg.norm(g):.3f}, tfidf_scale={scale_factor:.4f}")
         return {"s": s, "t": t, "g": g}
 
     def concat(self, parts: Dict[str, np.ndarray]) -> np.ndarray:

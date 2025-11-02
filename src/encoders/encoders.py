@@ -173,10 +173,10 @@ class TfidfEncoder:
             tokenizer=_tok,
             preprocessor=None,
             token_pattern=None,  # necessário quando passamos tokenizer
-            lowercase=True,
+            lowercase=False,    # tokenizer customizado já faz lowercase
             stop_words=None,     # já lidamos no analyzer
             min_df=self.min_df,
-            max_features=self.dim,
+            max_features=None if self.dim is None else self.dim,
             dtype=np.float32,
             norm=None,           # normalização L2 faremos nós
             use_idf=True,
@@ -189,6 +189,9 @@ class TfidfEncoder:
             self._vectorizer.fit([""])
         else:
             self._vectorizer.fit(docs)
+        # Atualiza dim com o tamanho real do vocabulário (importante quando dim=None)
+        if self.dim is None:
+            self.dim = len(self._vectorizer.vocabulary_)
         self._fitted = True
 
     @property

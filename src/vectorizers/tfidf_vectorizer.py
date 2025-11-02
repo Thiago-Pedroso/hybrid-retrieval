@@ -7,7 +7,7 @@ from ..utils.logging import get_logger, log_time
 _log = get_logger("tfidf.vectorizer")
 
 class TFIDFVectorizer:
-    def __init__(self, dim: int = 1000, min_df: int = 2, backend: str = "sklearn"):
+    def __init__(self, dim: int = None, min_df: int = 1, backend: str = "sklearn"):
         self.encoder = TfidfEncoder(dim=dim, min_df=min_df, backend=backend)
         self._fitted = False
 

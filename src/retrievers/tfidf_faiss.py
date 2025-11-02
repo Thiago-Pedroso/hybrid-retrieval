@@ -23,15 +23,16 @@ class TFIDFRetriever(AbstractRetriever):
     Retriever esparso via TF-IDF denso (L2-normalizado) com FAISS (IP) e persistência opcional.
     """
     def __init__(self,
-                 dim: int = 1000,
-                 min_df: int = 2,
+                 dim: int = None,
+                 min_df: int = 1,
                  backend: str = "sklearn",
                  use_faiss: bool = True,
                  artifact_dir: Optional[str] = None,
                  index_name: str = "tfidf.index"):
         self.vec = TFIDFVectorizer(dim=dim, min_df=min_df, backend=backend)
         self.doc_ids: List[str] = []
-        self.doc_mat: np.ndarray = np.zeros((0, dim), dtype=np.float32)
+        # Para TF-IDF, usamos matriz esparsa (não densa)
+        self.doc_mat_sparse = None
         self.index = None
         self.faiss_helper = FaissFlatIPIndex(artifact_dir=artifact_dir, index_name=index_name)
         self.use_faiss = (use_faiss and _HAS_FAISS)
@@ -53,6 +54,13 @@ class TFIDFRetriever(AbstractRetriever):
         if ok:
             self.index = self.faiss_helper.index
             self.doc_ids = self.faiss_helper.doc_ids
+            # Verifica se a dimensão do índice carregado corresponde à dimensão atual
+            if self.index is not None and self.vec.dim is not None:
+                if self.index.d != self.vec.dim:
+                    _log.warning(f"  ⚠️  Dimensão do índice cache ({self.index.d}) != dimensão atual ({self.vec.dim}). Reconstruindo índice.")
+                    self.index = None
+                    self.doc_ids = []
+                    ok = False
         return ok
 
     def _save(self):
@@ -70,39 +78,34 @@ class TFIDFRetriever(AbstractRetriever):
         with log_time(_log, "Fit TF-IDF no corpus"):
             self.vec.fit_corpus(texts)
 
-        with log_time(_log, "Encoding documents (TF-IDF)"):
-            vecs = [self.vec.encode_text(t) for t in texts]
-            self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, self.vec.dim), dtype=np.float32)
-
-        if self._try_load():
-            _log.info(f"  ✓ Índice carregado do cache: {self._index_path}")
-            return
-
-        if self.use_faiss:
-            with log_time(_log, "Construindo FAISS IndexFlatIP"):
-                self.faiss_helper.build_from_matrix(self.doc_ids, self.doc_mat)
-                self.index = self.faiss_helper.index
-            _log.info(f"  ✓ FAISS IndexFlatIP: {self.index.ntotal} vetores, dim={self.vec.dim}")
-            self._save()
-        else:
-            self.index = None
-            _log.warning("  ⚠️  FAISS indisponível, usando NumPy fallback")
+        with log_time(_log, "Building sparse TF-IDF matrix"):
+            # Usa o vectorizer interno do encoder para manter sparse
+            self.doc_mat_sparse = self.vec.encoder._vectorizer.transform(texts)
+        
+        _log.info(f"  ✓ TF-IDF sparse matrix: {self.doc_mat_sparse.shape}, sparsity={1 - self.doc_mat_sparse.nnz / (self.doc_mat_sparse.shape[0] * self.doc_mat_sparse.shape[1]):.2%}")
+        
+        # Não usa FAISS para TF-IDF
+        self.index = None
+        self.use_faiss = False
 
     def retrieve(self, queries: List[Query], k: int = 10) -> Dict[str, List[Tuple[str, float]]]:
+        from sklearn.metrics.pairwise import cosine_similarity
+        
         results: Dict[str, List[Tuple[str, float]]] = {}
-        if len(self.doc_mat) == 0:
+        if not hasattr(self, 'doc_mat_sparse') or self.doc_mat_sparse is None:
             return {q.query_id: [] for q in queries}
 
         for q in queries:
-            qv = self.vec.encode_text(q.text).reshape(1, -1).astype(np.float32)
-            if self.use_faiss and self.index is not None:
-                scores, idx = self.index.search(qv, k)
-                ids = [self.doc_ids[i] for i in idx[0].tolist()]
-                sc = scores[0].tolist()
-                results[q.query_id] = list(zip(ids, sc))
-            else:
-                sims = (self.doc_mat @ qv.T).reshape(-1)
-                order = np.argpartition(sims, -k)[-k:]
-                order = order[np.argsort(sims[order])[::-1]]
-                results[q.query_id] = [(self.doc_ids[i], float(sims[i])) for i in order]
+            # Transforma query para sparse usando o vectorizer interno
+            query_sparse = self.vec.encoder._vectorizer.transform([q.text])
+            
+            # Calcula similaridade de cosseno (sparse-friendly)
+            similarities = cosine_similarity(query_sparse, self.doc_mat_sparse).flatten()
+            
+            # Top-k usando argpartition (eficiente)
+            top_idx = np.argpartition(similarities, -k)[-k:]
+            top_idx = top_idx[np.argsort(similarities[top_idx])[::-1]]
+            
+            results[q.query_id] = [(self.doc_ids[i], float(similarities[i])) for i in top_idx]
+        
         return results
