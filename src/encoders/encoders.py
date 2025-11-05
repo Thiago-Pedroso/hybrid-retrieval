@@ -122,6 +122,119 @@ class HFSemanticEncoder:
 
         raise RuntimeError(f"Backend '{self._backend}' não suportado. Modelo não foi carregado corretamente.")
 
+
+class OpenAISemanticEncoder:
+    """
+    Encoder semântico usando API da OpenAI (text-embedding-3-large).
+    Requer OPENAI_API_KEY no arquivo .env ou variável de ambiente.
+    """
+    def __init__(self,
+                 model_name: str = "text-embedding-3-large",
+                 normalize: bool = True,
+                 query_prefix: str = "",
+                 doc_prefix: str = "",
+                 api_key: Optional[str] = None,
+                 **kwargs):
+        self.model_name = model_name
+        self.normalize = normalize
+        self.query_prefix = query_prefix or ""
+        self.doc_prefix = doc_prefix or ""
+        
+        # Carrega API key de .env ou variável de ambiente
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass  # python-dotenv não é obrigatório se usar variável de ambiente
+        
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise RuntimeError(
+                "OPENAI_API_KEY não encontrada. "
+                "Defina no arquivo .env ou como variável de ambiente. "
+                "Instale python-dotenv com: pip install python-dotenv"
+            )
+        
+        try:
+            import openai
+            self.client = openai.OpenAI(api_key=self.api_key)
+        except ImportError:
+            raise RuntimeError(
+                "Biblioteca 'openai' não está instalada. "
+                "Instale com: pip install openai"
+            )
+        
+        # Dimensão conhecida para text-embedding-3-large: 3072
+        # Para outros modelos, pode variar
+        if "text-embedding-3-large" in model_name:
+            self.dim = 3072
+        elif "text-embedding-3-small" in model_name:
+            self.dim = 1536
+        elif "text-embedding-ada-002" in model_name:
+            self.dim = 1536
+        else:
+            # Tenta detectar a dimensão fazendo uma chamada de teste
+            try:
+                test_response = self.client.embeddings.create(
+                    model=self.model_name,
+                    input="test"
+                )
+                self.dim = len(test_response.data[0].embedding)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Não foi possível determinar a dimensão do modelo '{model_name}'. "
+                    f"Erro: {e}"
+                )
+
+    def encode_text(self, text: str, is_query: bool = False) -> np.ndarray:
+        """Encode text using OpenAI API."""
+        prefix = self.query_prefix if is_query else self.doc_prefix
+        full_text = prefix + (text or "")
+        
+        try:
+            response = self.client.embeddings.create(
+                model=self.model_name,
+                input=full_text
+            )
+            embedding = np.array(response.data[0].embedding, dtype=np.float32)
+            return l2norm(embedding) if self.normalize else embedding
+        except Exception as e:
+            raise RuntimeError(
+                f"Erro ao obter embedding da OpenAI para texto '{full_text[:50]}...': {e}"
+            ) from e
+    
+    def encode_batch(self, texts: List[str], is_query: bool = False) -> np.ndarray:
+        """Encode a batch of texts using OpenAI API (more efficient).
+        
+        Args:
+            texts: List of texts to encode
+            is_query: Whether these are queries (vs documents)
+            
+        Returns:
+            Array of shape (len(texts), dim) with embeddings
+        """
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        
+        prefix = self.query_prefix if is_query else self.doc_prefix
+        full_texts = [prefix + (text or "") for text in texts]
+        
+        try:
+            # OpenAI API supports batch input (up to 2048 items per request)
+            response = self.client.embeddings.create(
+                model=self.model_name,
+                input=full_texts
+            )
+            embeddings = np.array([item.embedding for item in response.data], dtype=np.float32)
+            if self.normalize:
+                embeddings = np.array([l2norm(emb) for emb in embeddings])
+            return embeddings
+        except Exception as e:
+            raise RuntimeError(
+                f"Erro ao obter embeddings da OpenAI em batch: {e}"
+            ) from e
+
+
 class TfidfEncoder:
     """
     TF-IDF com backend:

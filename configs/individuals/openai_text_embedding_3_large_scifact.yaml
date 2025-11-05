@@ -1,0 +1,40 @@
+# Avaliação do OpenAI text-embedding-3-large no SciFact
+# Requer OPENAI_API_KEY no arquivo .env ou variável de ambiente
+
+experiment:
+  name: openai_text_embedding_3_large_scifact
+  output_dir: "./outputs/experiments/default"
+
+dataset:
+  name: "scifact"
+  root: "./data/scifact/processed/beir"
+  split_preference: ["test", "dev", "validation", "train"]
+
+retrievers:
+  - name: "openai_text_embedding_3_large"
+    type: "dense"
+    vectorizer:
+      type: "dense"
+      semantic:
+        model: "text-embedding-3-large"
+        provider: "openai"
+    index:
+      type: "faiss"
+      factory: null  # FlatIP
+      metric: "ip"
+      artifact_dir: "./outputs/artifacts/scifact_openai_text_embedding_3_large"
+      index_name: "openai.index"
+
+metrics:
+  - "nDCG"
+  - "MRR"
+  - "MAP"
+  - "Recall"
+  - "Precision"
+
+ks: [1, 3, 5, 10]
+
+output_formats:
+  - "csv"
+  - "json"
+

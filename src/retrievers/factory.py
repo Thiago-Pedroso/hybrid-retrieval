@@ -71,6 +71,8 @@ def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
             device=semantic_cfg.get("device"),
             query_prefix=semantic_cfg.get("query_prefix", ""),
             doc_prefix=semantic_cfg.get("doc_prefix", ""),
+            provider=semantic_cfg.get("provider"),  # "openai" or "huggingface"
+            api_key=semantic_cfg.get("api_key"),  # Optional, can use .env
             artifact_dir=config.get("index", {}).get("artifact_dir"),
             index_name=config.get("index", {}).get("index_name", "dense.index"),
         )

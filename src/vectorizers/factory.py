@@ -34,6 +34,8 @@ def create_vectorizer(config: Dict[str, Any]) -> AbstractVectorizer:
             device=semantic_cfg.get("device"),
             query_prefix=semantic_cfg.get("query_prefix", ""),
             doc_prefix=semantic_cfg.get("doc_prefix", ""),
+            provider=semantic_cfg.get("provider"),  # "openai" or "huggingface"
+            api_key=semantic_cfg.get("api_key"),  # Optional, can use .env
         )
     
     elif vec_type == "tfidf":

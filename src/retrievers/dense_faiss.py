@@ -31,6 +31,8 @@ class DenseFaiss(AbstractRetriever):
                  device: Optional[str] = None,
                  query_prefix: str = "",
                  doc_prefix: str = "",
+                 provider: Optional[str] = None,
+                 api_key: Optional[str] = None,
                  # FAISS
                  use_faiss: bool = True,
                  artifact_dir: Optional[str] = None,
@@ -40,6 +42,8 @@ class DenseFaiss(AbstractRetriever):
             device=device,
             query_prefix=query_prefix,
             doc_prefix=doc_prefix,
+            provider=provider,
+            api_key=api_key,
         )
         self.dim = int(self.vec.total_dim)
         self.doc_ids: List[str] = []
@@ -77,8 +81,20 @@ class DenseFaiss(AbstractRetriever):
         texts = [(d.title or "") + " " + (d.text or "") for d in docs]
 
         with log_time(_log, "Encoding documents"):
-            vecs = [self.vec.encode_text(t, is_query=False)["s"] for t in texts]
-            self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, self.dim), dtype=np.float32)
+            # Use batch encoding for OpenAI provider (more efficient)
+            if hasattr(self.vec, '_provider') and self.vec._provider == "openai" and hasattr(self.vec.encoder, 'encode_batch'):
+                # Batch encoding for OpenAI (up to 2048 items per request)
+                batch_size = 100  # Conservative batch size to avoid rate limits
+                vecs = []
+                for i in range(0, len(texts), batch_size):
+                    batch_texts = texts[i:i + batch_size]
+                    batch_embeddings = self.vec.encoder.encode_batch(batch_texts, is_query=False)
+                    vecs.extend([emb for emb in batch_embeddings])
+                self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, self.dim), dtype=np.float32)
+            else:
+                # Individual encoding for HuggingFace models
+                vecs = [self.vec.encode_text(t, is_query=False)["s"] for t in texts]
+                self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, self.dim), dtype=np.float32)
 
         # tenta carregar índice salvo (se existir)
         if self._try_load():
