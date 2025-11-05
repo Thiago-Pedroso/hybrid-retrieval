@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
 from src.retrievers.bm25_basic import BM25Basic
-from src.retrievers.dense_faiss import DenseFaissStub
+from src.compat.retrievers import DenseFaissStub  # Compatibility wrapper
 from src.retrievers.hybrid_faiss import HybridRetriever
 from src.utils.io import ensure_dir, predictions_to_jsonl, write_jsonl
 from src.utils.logging import get_logger, set_log_level, enable_file_logging, log_time
@@ -122,7 +122,7 @@ def main():
             index_name=args.index_name,
         )
     elif args.retriever == "dense":
-        retr = DenseFaissStub(dim=args.sem_dim)
+        retr = DenseFaissStub(dim=args.sem_dim)  # Uses compatibility wrapper
     else:
         retr = BM25Basic()
 

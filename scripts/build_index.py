@@ -3,7 +3,7 @@ import argparse
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents
 from src.retrievers.bm25_basic import BM25Basic
-from src.retrievers.dense_faiss import DenseFaissStub
+from src.compat.retrievers import DenseFaissStub  # Compatibility wrapper
 from src.retrievers.hybrid_faiss import HybridRetriever
 from src.utils.logging import get_logger
 

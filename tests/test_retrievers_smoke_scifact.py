@@ -1,7 +1,7 @@
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
 from src.retrievers.bm25_basic import BM25Basic
-from src.retrievers.dense_faiss import DenseFaissStub
+from src.retrievers.dense_faiss import DenseFaiss
 from src.retrievers.hybrid_faiss import HybridRetriever
 
 def _prep_scifact_subset(n_docs=1000, n_queries=50):
@@ -38,7 +38,8 @@ def test_bm25_smoke():
 
 def test_dense_smoke():
     docs, qlist = _prep_scifact_subset()
-    retr = DenseFaissStub(dim=128)
+    # DenseFaiss doesn't use dim parameter anymore, uses model directly
+    retr = DenseFaiss(model_name="sentence-transformers/all-MiniLM-L6-v2")
     retr.build_index(docs)
     res = retr.retrieve(qlist, k=10)
     _assert_k(res, qlist, 10)

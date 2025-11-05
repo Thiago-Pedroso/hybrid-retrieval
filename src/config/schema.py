@@ -79,8 +79,13 @@ class RetrieverConfig(BaseModel):
     fusion: Optional[FusionConfig] = None
     reranker: Optional[RerankerConfig] = None
     index: Optional[IndexConfig] = None
-    # Additional retriever-specific config
+    # Additional retriever-specific config (for backward compatibility with legacy params)
     extra: Dict[str, Any] = Field(default_factory=dict)
+    
+    # Legacy parameters (for backward compatibility)
+    semantic: Optional[Dict[str, Any]] = None
+    tfidf: Optional[Dict[str, Any]] = None
+    graph: Optional[Dict[str, Any]] = None
 
 
 class DatasetConfig(BaseModel):
