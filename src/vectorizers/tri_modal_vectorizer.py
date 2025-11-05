@@ -16,6 +16,7 @@ class TriModalVectorizer:
                  tfidf_backend: str = "sklearn",
                  query_prefix: str = "",
                  doc_prefix: str = "",
+                 tfidf_scale_multiplier: float = 1.25,
                  # ENTIDADES
                  graph_model_name: str = "BAAI/bge-large-en-v1.5",
                  ner_backend: str = "scispacy",
@@ -24,6 +25,8 @@ class TriModalVectorizer:
                  ner_batch_size: int = 128,
                  ner_n_process: int = 4,
                  ner_allowed_labels: Optional[List[str]] = None,
+                 entity_min_df: Optional[int] = None,  # Se None, usa min_df do TF-IDF
+                 entity_max_entities_per_text: Optional[int] = None,  # Se None, usa default do EntityEncoderReal
                  entity_artifact_dir: Optional[str] = None,
                  entity_force_rebuild: bool = False,
                  device: Optional[str] = None):
@@ -37,7 +40,8 @@ class TriModalVectorizer:
 
         # lexical (t)
         self.tfidf = TfidfEncoder(dim=tfidf_dim, min_df=min_df, backend=tfidf_backend)
-
+        self.tfidf_scale_multiplier = tfidf_scale_multiplier
+        
         # entidades (g)
         ner_cfg = NERConfig(
             backend=ner_backend,
@@ -51,11 +55,14 @@ class TriModalVectorizer:
             artifact_dir=Path(entity_artifact_dir) if entity_artifact_dir else None,
             force_rebuild=entity_force_rebuild,
         )
+        # Usa entity_min_df se fornecido, senão usa min_df do TF-IDF
+        entity_min_df_val = entity_min_df if entity_min_df is not None else min_df
         self.entities = EntityEncoderReal(
             graph_model_name=graph_model_name,
             device=device,
             ner=ner_cfg,
-            min_df=min_df,
+            min_df=entity_min_df_val,
+            max_entities_per_text=entity_max_entities_per_text if entity_max_entities_per_text is not None else 128,
             cache=cache_cfg,
         )
 
@@ -104,12 +111,14 @@ class TriModalVectorizer:
         t = self._encode_tfidf(text)
         g = self._encode_entities(text)
         
-        # Escalonamento do TF-IDF: t' = t̂_d * √(D_s / D_t)
+        # Escalonamento do TF-IDF: t' = t̂_d * √(D_s / D_t) × multiplier
+        # Multiplier padrão 1.25× foi otimizado empiricamente para melhor balanceamento
         D_s = self.slice_dims["s"]
         D_t = self.slice_dims["t"]
-        scale_factor = 1.0  # Default: sem escalonamento
+        scale_factor = 1.0
         if D_t > 0 and t.size > 0:
-            scale_factor = np.sqrt(float(D_s) / float(D_t))
+            base_scale = np.sqrt(float(D_s) / float(D_t))
+            scale_factor = base_scale * self.tfidf_scale_multiplier
             t = t * scale_factor
         
         _log.debug(f"Encoded vectors: s_norm={np.linalg.norm(s):.3f}, t_norm={np.linalg.norm(t):.3f}, g_norm={np.linalg.norm(g):.3f}, tfidf_scale={scale_factor:.4f}")
