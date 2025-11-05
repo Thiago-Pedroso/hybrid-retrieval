@@ -21,7 +21,7 @@ from ..datasets.schema import Query
 
 def evaluate_predictions(
     preds: Dict[str, List[Tuple[str, float]]],
-    qrels: pd.DataFrame,
+                         qrels: pd.DataFrame,
     ks: Sequence[int] = (1, 3, 5, 10),
     metrics: Optional[List[str]] = None,
 ) -> pd.DataFrame:
@@ -43,7 +43,7 @@ def evaluate_predictions(
         did = str(getattr(row, "doc_id"))
         sc = float(getattr(row, "score", 1))
         qrels_map.setdefault(qid, {})[did] = sc
-    
+
     # Get metrics to compute
     if metrics is None:
         metrics_to_compute = list(METRICS_REGISTRY.keys())

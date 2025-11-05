@@ -5,7 +5,7 @@ Pydantic schemas for configuration validation.
 from __future__ import annotations
 from typing import List, Optional, Dict, Any, Literal
 from pathlib import Path
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SemanticConfig(BaseModel):
@@ -99,7 +99,9 @@ class DatasetConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     """Complete experiment configuration."""
     experiment: Dict[str, Any] = Field(default_factory=dict)
-    dataset: DatasetConfig
+    # Support both single dataset (backward compatibility) and multiple datasets
+    dataset: Optional[DatasetConfig] = None
+    datasets: Optional[List[DatasetConfig]] = None
     retrievers: List[RetrieverConfig]
     metrics: List[str] = Field(default_factory=lambda: ["nDCG", "MRR", "MAP", "Recall", "Precision"])
     ks: List[int] = Field(default_factory=lambda: [1, 3, 5, 10])
@@ -121,4 +123,20 @@ class ExperimentConfig(BaseModel):
         if invalid:
             raise ValueError(f"Invalid metrics: {invalid}. Valid: {valid_metrics}")
         return v
+    
+    @model_validator(mode="after")
+    def validate_dataset_config(self):
+        """Ensure at least one dataset is specified."""
+        if self.dataset is None and (self.datasets is None or len(self.datasets) == 0):
+            raise ValueError("Either 'dataset' or 'datasets' must be specified")
+        return self
+    
+    def get_datasets(self) -> List[DatasetConfig]:
+        """Get list of datasets to process."""
+        if self.datasets is not None:
+            return self.datasets
+        elif self.dataset is not None:
+            return [self.dataset]
+        else:
+            raise ValueError("No datasets specified")
 

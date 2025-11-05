@@ -7,7 +7,7 @@ from ..core.interfaces import AbstractVectorizer
 
 class DenseVectorizer(AbstractVectorizer):
     """Dense vectorizer using semantic embeddings only."""
-    
+
     def __init__(self,
                  model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
                  device: Optional[str] = None,
@@ -44,7 +44,7 @@ class DenseVectorizer(AbstractVectorizer):
     def encode_query(self, text: str) -> np.ndarray:
         """Backward compatibility: encode query."""
         return self.encode_text(text, is_query=True)["s"]
-    
+
     def encode_doc(self, text: str) -> np.ndarray:
         """Backward compatibility: encode document."""
         return self.encode_text(text, is_query=False)["s"]

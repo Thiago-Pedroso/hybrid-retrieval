@@ -6,7 +6,7 @@ from ..core.interfaces import AbstractWeightPolicy
 
 class StaticPolicy(AbstractWeightPolicy):
     """Static weight policy with fixed weights."""
-    
+
     def __init__(self, ws: float = 0.5, wt: float = 0.3, wg: float = 0.2):
         s = max(ws, 0.0); t = max(wt, 0.0); g = max(wg, 0.0)
         z = (s + t + g) or 1.0

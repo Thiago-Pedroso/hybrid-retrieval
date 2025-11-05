@@ -35,100 +35,147 @@ class ExperimentRunner:
         """Run the experiment and return results.
         
         Returns:
-            DataFrame with results for all retrievers
+            DataFrame with results for all retrievers across all datasets
         """
-        # Load dataset
-        dataset_root = Path(self.config.dataset.root or 
-                          f"./data/{self.config.dataset.name}/processed/beir")
+        # Get list of datasets to process
+        datasets = self.config.get_datasets()
         
-        if not dataset_root.exists():
-            raise FileNotFoundError(f"Dataset root not found: {dataset_root}")
+        self.log.info(f"Running experiment on {len(datasets)} dataset(s)")
         
-        self.log.info(f"Loading dataset from: {dataset_root}")
-        with log_time(self.log, "Load dataset"):
-            corpus, queries, qrels = load_beir_dataset(dataset_root)
+        all_results_rows = []
         
-        # Select split
-        split = select_split(qrels, tuple(self.config.dataset.split_preference))
-        split_eval = "test" if "test" in set(qrels["split"]) else split
-        qrels_eval = qrels[qrels["split"] == split_eval].copy()
-        
-        self.log.info(f"Using split: {split_eval} ({len(qrels_eval)} qrels)")
-        
-        # Prepare documents and queries
-        docs = as_documents(corpus)
-        qids = set(qrels_eval["query_id"].unique().tolist())
-        queries_eval = queries[queries["query_id"].isin(qids)]
-        qlist = as_queries(queries_eval)
-        
-        self.log.info(f"Documents: {len(docs)}, Queries: {len(qlist)}")
-        
-        # Run each retriever
-        results_rows = []
-        
-        for retriever_config in self.config.retrievers:
-            retriever_name = retriever_config.name or retriever_config.type
-            self.log.info(f"\n{'='*80}")
-            self.log.info(f"Running retriever: {retriever_name}")
-            self.log.info(f"{'='*80}")
+        # Process each dataset
+        for dataset_config in datasets:
+            dataset_name = dataset_config.name
+            self.log.info(f"\n{'#'*80}")
+            self.log.info(f"# Processing Dataset: {dataset_name}")
+            self.log.info(f"{'#'*80}")
             
+            # Load dataset
+            dataset_root = Path(dataset_config.root or 
+                              f"./data/{dataset_name}/processed/beir")
+            
+            if not dataset_root.exists():
+                self.log.warning(f"⚠️  Dataset root not found: {dataset_root}. Skipping...")
+                # Add error rows for this dataset
+                for retriever_config in self.config.retrievers:
+                    retriever_name = retriever_config.name or retriever_config.type
+                    for k in self.config.ks:
+                        error_row = {
+                            "k": k,
+                            "retriever": retriever_name,
+                            "retriever_type": retriever_config.type,
+                            "dataset": dataset_name,
+                            "split": "unknown",
+                            "error": f"Dataset root not found: {dataset_root}",
+                        }
+                        for metric in self.config.metrics:
+                            error_row[metric] = 0.0
+                        all_results_rows.append(error_row)
+                continue
+            
+            self.log.info(f"Loading dataset from: {dataset_root}")
             try:
-                # Create retriever from config
-                retriever_dict = retriever_config.model_dump(exclude_none=True)
-                # Remove 'name' from dict as it's not part of retriever config
-                retriever_dict.pop("name", None)
-                retriever = create_retriever(retriever_dict)
-                
-                # Build index
-                with log_time(self.log, f"Build index ({retriever_name})"):
-                    retriever.build_index(docs)
-                
-                # Retrieve
-                t0 = time.time()
-                preds = retriever.retrieve(qlist, k=max(self.config.ks))
-                t_retrieve = time.time() - t0
-                
-                # Evaluate
-                with log_time(self.log, f"Evaluate ({retriever_name})"):
-                    metrics_df = evaluate_predictions(
-                        preds,
-                        qrels_eval,
-                        ks=tuple(self.config.ks),
-                        metrics=self.config.metrics,
-                    )
-                
-                # Add metadata
-                for _, row in metrics_df.iterrows():
-                    result_row = row.to_dict()
-                    result_row.update({
-                        "retriever": retriever_name,
-                        "retriever_type": retriever_config.type,
-                        "dataset": self.config.dataset.name,
-                        "split": split_eval,
-                        "t_retrieve_sec": round(t_retrieve, 3),
-                    })
-                    results_rows.append(result_row)
-                
-                self.log.info(f"✅ Retriever {retriever_name} completed")
-                
+                with log_time(self.log, f"Load dataset ({dataset_name})"):
+                    corpus, queries, qrels = load_beir_dataset(dataset_root)
             except Exception as e:
-                self.log.error(f"❌ Error running retriever {retriever_name}: {e}", exc_info=True)
-                # Add error row
-                for k in self.config.ks:
-                    error_row = {
-                        "k": k,
-                        "retriever": retriever_name,
-                        "retriever_type": retriever_config.type,
-                        "dataset": self.config.dataset.name,
-                        "split": split_eval,
-                        "error": str(e),
-                    }
-                    for metric in self.config.metrics:
-                        error_row[metric] = 0.0
-                    results_rows.append(error_row)
+                self.log.error(f"❌ Error loading dataset {dataset_name}: {e}", exc_info=True)
+                # Add error rows
+                for retriever_config in self.config.retrievers:
+                    retriever_name = retriever_config.name or retriever_config.type
+                    for k in self.config.ks:
+                        error_row = {
+                            "k": k,
+                            "retriever": retriever_name,
+                            "retriever_type": retriever_config.type,
+                            "dataset": dataset_name,
+                            "split": "unknown",
+                            "error": str(e),
+                        }
+                        for metric in self.config.metrics:
+                            error_row[metric] = 0.0
+                        all_results_rows.append(error_row)
+                continue
+            
+            # Select split
+            split = select_split(qrels, tuple(dataset_config.split_preference))
+            split_eval = "test" if "test" in set(qrels["split"]) else split
+            qrels_eval = qrels[qrels["split"] == split_eval].copy()
+            
+            self.log.info(f"Using split: {split_eval} ({len(qrels_eval)} qrels)")
+            
+            # Prepare documents and queries
+            docs = as_documents(corpus)
+            qids = set(qrels_eval["query_id"].unique().tolist())
+            queries_eval = queries[queries["query_id"].isin(qids)]
+            qlist = as_queries(queries_eval)
+            
+            self.log.info(f"Documents: {len(docs)}, Queries: {len(qlist)}")
+            
+            # Run each retriever on this dataset
+            for retriever_config in self.config.retrievers:
+                retriever_name = retriever_config.name or retriever_config.type
+                self.log.info(f"\n{'='*80}")
+                self.log.info(f"Running retriever: {retriever_name} on {dataset_name}")
+                self.log.info(f"{'='*80}")
+                
+                try:
+                    # Create retriever from config
+                    retriever_dict = retriever_config.model_dump(exclude_none=True)
+                    # Remove 'name' from dict as it's not part of retriever config
+                    retriever_dict.pop("name", None)
+                    retriever = create_retriever(retriever_dict)
+                    
+                    # Build index
+                    with log_time(self.log, f"Build index ({retriever_name} on {dataset_name})"):
+                        retriever.build_index(docs)
+                    
+                    # Retrieve
+                    t0 = time.time()
+                    preds = retriever.retrieve(qlist, k=max(self.config.ks))
+                    t_retrieve = time.time() - t0
+                    
+                    # Evaluate
+                    with log_time(self.log, f"Evaluate ({retriever_name} on {dataset_name})"):
+                        metrics_df = evaluate_predictions(
+                            preds,
+                            qrels_eval,
+                            ks=tuple(self.config.ks),
+                            metrics=self.config.metrics,
+                        )
+                    
+                    # Add metadata
+                    for _, row in metrics_df.iterrows():
+                        result_row = row.to_dict()
+                        result_row.update({
+                            "retriever": retriever_name,
+                            "retriever_type": retriever_config.type,
+                            "dataset": dataset_name,
+                            "split": split_eval,
+                            "t_retrieve_sec": round(t_retrieve, 3),
+                        })
+                        all_results_rows.append(result_row)
+                    
+                    self.log.info(f"✅ Retriever {retriever_name} on {dataset_name} completed")
+                    
+                except Exception as e:
+                    self.log.error(f"❌ Error running retriever {retriever_name} on {dataset_name}: {e}", exc_info=True)
+                    # Add error row
+                    for k in self.config.ks:
+                        error_row = {
+                            "k": k,
+                            "retriever": retriever_name,
+                            "retriever_type": retriever_config.type,
+                            "dataset": dataset_name,
+                            "split": split_eval,
+                            "error": str(e),
+                        }
+                        for metric in self.config.metrics:
+                            error_row[metric] = 0.0
+                        all_results_rows.append(error_row)
         
         # Create results DataFrame
-        results_df = pd.DataFrame(results_rows)
+        results_df = pd.DataFrame(all_results_rows)
         
         # Save results
         if self.config.output_dir:
