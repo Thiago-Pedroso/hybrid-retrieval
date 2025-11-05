@@ -41,7 +41,7 @@ class DenseFaiss(AbstractRetriever):
             query_prefix=query_prefix,
             doc_prefix=doc_prefix,
         )
-        self.dim = int(self.vec.dim)
+        self.dim = int(self.vec.total_dim)
         self.doc_ids: List[str] = []
         self.doc_mat: np.ndarray = np.zeros((0, self.dim), dtype=np.float32)
         self.index = None
