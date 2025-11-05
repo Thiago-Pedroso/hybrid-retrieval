@@ -1,0 +1,48 @@
+experiment:
+  name: "individual_dense_scifact"
+  output_dir: "./outputs/experiments/individuals"
+
+# Single dataset (scifact)
+dataset:
+  name: "scifact"
+  root: "./data/scifact/processed/beir"
+  split_preference: ["test", "dev", "validation", "train"]
+
+# Alternative: Multiple datasets (commented)
+# datasets:
+#   - name: "scifact"
+#     root: "./data/scifact/processed/beir"
+#     split_preference: ["test", "dev", "validation", "train"]
+#   - name: "fiqa"
+#     root: "./data/fiqa/processed/beir"
+#     split_preference: ["test", "dev", "validation", "train"]
+#   - name: "nfcorpus"
+#     root: "./data/nfcorpus/processed/beir"
+#     split_preference: ["test", "dev", "validation", "train"]
+
+retrievers:
+  - name: "dense_minilm"
+    type: "dense"
+    vectorizer:
+      type: "dense"
+      semantic:
+        model: "sentence-transformers/all-MiniLM-L6-v2"
+        query_prefix: ""
+        doc_prefix: ""
+    index:
+      type: "faiss"
+      metric: "ip"
+
+metrics:
+  - "nDCG"
+  - "MRR"
+  - "MAP"
+  - "Recall"
+  - "Precision"
+
+ks: [1, 3, 5, 10]
+
+output_formats:
+  - "csv"
+  - "json"
+
