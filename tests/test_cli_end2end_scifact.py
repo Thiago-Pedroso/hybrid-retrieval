@@ -1,3 +1,7 @@
+"""
+Teste end-to-end usando o novo sistema YAML.
+Testa que o sistema completo funciona: carregar config, executar experimento, gerar métricas.
+"""
 import os
 import sys
 import subprocess
@@ -15,27 +19,39 @@ def run(argv_list):
     return out
 
 def test_cli_end2end_scifact():
+    """Teste end-to-end usando YAML config."""
     data_root = Path("./data/scifact/processed/beir").resolve()
     assert data_root.exists(), "SciFact BEIR processado é necessário para o smoke."
 
-    pred_path = Path("./outputs/smoke_scifact_hybrid.jsonl").resolve()
-    met_path  = Path("./outputs/smoke_scifact_hybrid_metrics.csv").resolve()
+    config_path = Path("./configs/test_hybrid_scifact.yaml").resolve()
+    assert config_path.exists(), f"Config YAML não encontrado: {config_path}"
+    
+    # Output esperado do experimento
+    output_dir = Path("./outputs").resolve()
+    expected_csv = output_dir / "test_hybrid_scifact.csv"
 
     os.environ["PYTHONPATH"] = os.getcwd()
 
-    # run_retrieval
-    run(["scripts/run_retrieval.py", "--dataset-root", str(data_root),
-         "--retriever", "hybrid", "--k", "10", "--out", str(pred_path)])
+    # Executa experimento via YAML
+    run(["scripts/run_experiment.py", "--config", str(config_path),
+         "--override", f"dataset.root={data_root}"])
 
-    assert pred_path.exists(), "Predições não foram geradas."
+    # Verifica que o arquivo de resultados foi gerado
+    assert expected_csv.exists(), f"Arquivo de métricas não foi gerado: {expected_csv}"
 
-    # evaluate
-    run(["scripts/evaluate.py", "--dataset-root", str(data_root),
-         "--predictions", str(pred_path), "--ks", "1,3,5,10", "--out", str(met_path)])
-
-    assert met_path.exists(), "Métricas não foram geradas."
-    df = pd.read_csv(met_path)
-    for col in ["k","MRR","nDCG","MAP","Recall","Precision"]:
-        assert col in df.columns
-    for col in ["MRR","nDCG","MAP","Recall","Precision"]:
-        assert (df[col] >= 0).all() and (df[col] <= 1).all()
+    # Verifica estrutura do CSV
+    df = pd.read_csv(expected_csv)
+    required_cols = ["k", "nDCG", "MRR", "MAP", "Recall", "Precision"]
+    for col in required_cols:
+        assert col in df.columns, f"Coluna '{col}' não encontrada no CSV"
+    
+    # Verifica valores válidos
+    metric_cols = ["MRR", "nDCG", "MAP", "Recall", "Precision"]
+    for col in metric_cols:
+        assert (df[col] >= 0).all() and (df[col] <= 1).all(), \
+            f"Valores de {col} fora do intervalo [0, 1]"
+    
+    # Verifica que há resultados para os k's esperados
+    expected_ks = [1, 3, 5, 10]
+    assert set(df["k"].unique()) == set(expected_ks), \
+        f"k's esperados: {expected_ks}, encontrados: {df['k'].unique().tolist()}"

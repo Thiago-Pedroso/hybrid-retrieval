@@ -103,8 +103,9 @@ hybrid-retrieval/
 │   ├── eval/             # Métricas de avaliação
 │   └── utils/             # Logging e utilitários
 ├── scripts/
-│   ├── run_prerank_ab.py  # Script principal A/B
-│   └── run_retrieval.py   # Script de retrieval
+│   ├── run_experiment.py  # Script principal para experimentos via YAML
+│   ├── run_prerank_ab.py  # Script especializado A/B test
+│   └── evaluate.py        # Avaliação de predições pré-computadas
 ├── tests/                 # Testes unitários
 ├── docs/                  # Documentação técnica
 ├── outputs/               # Resultados e caches
