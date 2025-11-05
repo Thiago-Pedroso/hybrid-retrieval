@@ -55,9 +55,9 @@ class TFIDFRetriever(AbstractRetriever):
             self.index = self.faiss_helper.index
             self.doc_ids = self.faiss_helper.doc_ids
             # Verifica se a dimensão do índice carregado corresponde à dimensão atual
-            if self.index is not None and self.vec.dim is not None:
-                if self.index.d != self.vec.dim:
-                    _log.warning(f"  ⚠️  Dimensão do índice cache ({self.index.d}) != dimensão atual ({self.vec.dim}). Reconstruindo índice.")
+            if self.index is not None:
+                if self.index.d != self.vec.total_dim:
+                    _log.warning(f"  ⚠️  Dimensão do índice cache ({self.index.d}) != dimensão atual ({self.vec.total_dim}). Reconstruindo índice.")
                     self.index = None
                     self.doc_ids = []
                     ok = False

@@ -77,7 +77,7 @@ class DenseFaiss(AbstractRetriever):
         texts = [(d.title or "") + " " + (d.text or "") for d in docs]
 
         with log_time(_log, "Encoding documents"):
-            vecs = [self.vec.encode_doc(t) for t in texts]
+            vecs = [self.vec.encode_text(t, is_query=False)["s"] for t in texts]
             self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, self.dim), dtype=np.float32)
 
         # tenta carregar índice salvo (se existir)
@@ -103,7 +103,7 @@ class DenseFaiss(AbstractRetriever):
             return {q.query_id: [] for q in queries}
 
         for q in queries:
-            qv = self.vec.encode_query(q.text).reshape(1, -1).astype(np.float32)
+            qv = self.vec.encode_text(q.text, is_query=True)["s"].reshape(1, -1).astype(np.float32)
             if self.use_faiss and self.index is not None:
                 scores, idx = self.index.search(qv, k)
                 ids = [self.doc_ids[i] for i in idx[0].tolist()]

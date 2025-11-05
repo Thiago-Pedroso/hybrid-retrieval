@@ -79,13 +79,6 @@ class RetrieverConfig(BaseModel):
     fusion: Optional[FusionConfig] = None
     reranker: Optional[RerankerConfig] = None
     index: Optional[IndexConfig] = None
-    # Additional retriever-specific config (for backward compatibility with legacy params)
-    extra: Dict[str, Any] = Field(default_factory=dict)
-    
-    # Legacy parameters (for backward compatibility)
-    semantic: Optional[Dict[str, Any]] = None
-    tfidf: Optional[Dict[str, Any]] = None
-    graph: Optional[Dict[str, Any]] = None
 
 
 class DatasetConfig(BaseModel):
@@ -99,7 +92,7 @@ class DatasetConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     """Complete experiment configuration."""
     experiment: Dict[str, Any] = Field(default_factory=dict)
-    # Support both single dataset (backward compatibility) and multiple datasets
+    # Support both single dataset and multiple datasets
     dataset: Optional[DatasetConfig] = None
     datasets: Optional[List[DatasetConfig]] = None
     retrievers: List[RetrieverConfig]

@@ -65,7 +65,6 @@ def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
         )
     
     elif retriever_type == "dense":
-        # Use legacy API for now (these retrievers haven't been fully refactored yet)
         semantic_cfg = config.get("vectorizer", {}).get("semantic", {}) or config.get("semantic", {})
         return DenseFaiss(
             model_name=semantic_cfg.get("model", "sentence-transformers/all-MiniLM-L6-v2"),
@@ -77,7 +76,6 @@ def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
         )
     
     elif retriever_type == "tfidf":
-        # Use legacy API for now
         tfidf_cfg = config.get("vectorizer", {}).get("tfidf", {}) or config.get("tfidf", {})
         return TFIDFRetriever(
             dim=tfidf_cfg.get("dim"),
@@ -88,7 +86,6 @@ def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
         )
     
     elif retriever_type == "graph":
-        # Use legacy API for now
         graph_cfg = config.get("vectorizer", {}).get("graph", {}) or config.get("graph", {})
         return GraphRetriever(
             graph_model_name=graph_cfg.get("model", "BAAI/bge-large-en-v1.5"),

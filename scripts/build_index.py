@@ -3,13 +3,16 @@ import argparse
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents
 from src.retrievers.bm25_basic import BM25Basic
-from src.compat.retrievers import DenseFaissStub  # Compatibility wrapper
+from src.retrievers.dense_faiss import DenseFaiss
 from src.retrievers.hybrid_faiss import HybridRetriever
+from src.vectorizers.factory import create_vectorizer
+from src.indexes.factory import create_index
+from src.fusion.factory import create_weight_policy, create_reranker
 from src.utils.logging import get_logger
 
 RETRIEVERS = {
     "bm25": BM25Basic,
-    "dense": DenseFaissStub,
+    "dense": DenseFaiss,
     "hybrid": HybridRetriever,
 }
 
@@ -31,9 +34,32 @@ def main():
 
     # instância do retriever
     if args.retriever == "hybrid":
-        retr = HybridRetriever(tfidf_dim=args.tfidf_dim)
+        # Create components using new modular API
+        vectorizer = create_vectorizer({
+            "type": "tri_modal",
+            "semantic": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+            "tfidf": {"dim": args.tfidf_dim},
+            "graph": {"model": "BAAI/bge-large-en-v1.5"},
+        })
+        index = create_index({"type": "faiss", "metric": "ip"}, vectorizer)
+        weight_policy = create_weight_policy({"policy": "heuristic"})
+        reranker = create_reranker("tri_modal", vectorizer)
+        retr = HybridRetriever(
+            vectorizer=vectorizer,
+            index=index,
+            reranker=reranker,
+            weight_policy=weight_policy,
+            topk_first=150,
+        )
     elif args.retriever == "dense":
-        retr = DenseFaissStub(dim=args.sem_dim)
+        # Map dimension to model (384 -> MiniLM, 768 -> mpnet, 1024 -> BGE-large)
+        model_map = {
+            384: "sentence-transformers/all-MiniLM-L6-v2",
+            768: "sentence-transformers/all-mpnet-base-v2",
+            1024: "BAAI/bge-large-en-v1.5",
+        }
+        model_name = model_map.get(args.sem_dim, "sentence-transformers/all-MiniLM-L6-v2")
+        retr = DenseFaiss(model_name=model_name)
     else:
         retr = BM25Basic()
 

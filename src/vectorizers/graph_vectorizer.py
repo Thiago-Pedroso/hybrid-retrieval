@@ -67,8 +67,3 @@ class GraphVectorizer(AbstractVectorizer):
         """Total dimension (graph/entity only)."""
         return int(self.encoder.dim)
     
-    # Backward compatibility
-    @property
-    def dim(self) -> int:
-        """Backward compatibility: dim property."""
-        return self.total_dim

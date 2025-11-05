@@ -1,8 +1,7 @@
 """
 Evaluation metrics for information retrieval.
 
-This module provides both class-based implementations (for modularity)
-and function-based implementations (for backward compatibility).
+This module provides class-based implementations implementing AbstractMetric interface.
 """
 
 import numpy as np
@@ -179,39 +178,3 @@ def get_metric(name: str) -> AbstractMetric:
     raise ValueError(f"Unknown metric: {name}. Available: {list(METRICS_REGISTRY.keys())}")
 
 
-# ============================================================================
-# Backward compatibility: standalone functions
-# ============================================================================
-
-def mrr_at_k(ranked: Sequence[str], gold: set, k: int = 10) -> float:
-    """Compute MRR@k (backward compatibility function)."""
-    gold_dict = {d: 1.0 for d in gold}
-    return MRRMetric().compute(list(ranked), gold_dict, k)
-
-
-def dcg_at_k(ranked: Sequence[str], gains: Dict[str, float], k: int = 10) -> float:
-    """Compute DCG@k (backward compatibility function)."""
-    return _dcg_at_k(ranked, gains, k)
-
-
-def ndcg_at_k(ranked: Sequence[str], gains: Dict[str, float], k: int = 10) -> float:
-    """Compute nDCG@k (backward compatibility function)."""
-    return NDCGMetric().compute(list(ranked), gains, k)
-
-
-def average_precision_at_k(ranked: Sequence[str], gold: set, k: int = 10) -> float:
-    """Compute MAP@k (backward compatibility function)."""
-    gold_dict = {d: 1.0 for d in gold}
-    return MAPMetric().compute(list(ranked), gold_dict, k)
-
-
-def recall_at_k(ranked: Sequence[str], gold: set, k: int = 10) -> float:
-    """Compute Recall@k (backward compatibility function)."""
-    gold_dict = {d: 1.0 for d in gold}
-    return RecallMetric().compute(list(ranked), gold_dict, k)
-
-
-def precision_at_k(ranked: Sequence[str], gold: set, k: int = 10) -> float:
-    """Compute Precision@k (backward compatibility function)."""
-    gold_dict = {d: 1.0 for d in gold}
-    return PrecisionMetric().compute(list(ranked), gold_dict, k)

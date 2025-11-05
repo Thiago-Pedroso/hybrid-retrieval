@@ -37,8 +37,3 @@ class TFIDFVectorizer(AbstractVectorizer):
         """Total dimension (TF-IDF only)."""
         return int(self.encoder.dim)
     
-    # Backward compatibility
-    @property
-    def dim(self) -> int:
-        """Backward compatibility: dim property."""
-        return self.total_dim

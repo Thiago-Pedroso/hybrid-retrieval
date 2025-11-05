@@ -40,11 +40,3 @@ class DenseVectorizer(AbstractVectorizer):
         """Total dimension (semantic only)."""
         return self._dim
     
-    # Backward compatibility methods
-    def encode_query(self, text: str) -> np.ndarray:
-        """Backward compatibility: encode query."""
-        return self.encode_text(text, is_query=True)["s"]
-
-    def encode_doc(self, text: str) -> np.ndarray:
-        """Backward compatibility: encode document."""
-        return self.encode_text(text, is_query=False)["s"]

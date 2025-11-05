@@ -8,12 +8,6 @@ import pandas as pd
 from .metrics import (
     get_metric,
     METRICS_REGISTRY,
-    # Backward compatibility imports
-    mrr_at_k,
-    ndcg_at_k,
-    average_precision_at_k,
-    recall_at_k,
-    precision_at_k,
 )
 from ..core.interfaces import AbstractMetric
 from ..datasets.schema import Query

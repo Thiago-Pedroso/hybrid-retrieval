@@ -4,8 +4,11 @@ import argparse
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
 from src.retrievers.bm25_basic import BM25Basic
-from src.compat.retrievers import DenseFaissStub  # Compatibility wrapper
+from src.retrievers.dense_faiss import DenseFaiss
 from src.retrievers.hybrid_faiss import HybridRetriever
+from src.vectorizers.factory import create_vectorizer
+from src.indexes.factory import create_index
+from src.fusion.factory import create_weight_policy, create_reranker
 from src.utils.io import ensure_dir, predictions_to_jsonl, write_jsonl
 from src.utils.logging import get_logger, set_log_level, enable_file_logging, log_time
 
@@ -97,32 +100,70 @@ def main():
     log.info(f"✓ Preparado: {len(docs)} documentos, {len(qlist)} queries")
 
     if args.retriever == "hybrid":
+        # Create components using new modular API
         allowed_labels = [s.strip() for s in args.ner_allowed_labels.split(",") if s.strip()] if args.ner_allowed_labels else None
+        vectorizer_config = {
+            "type": "tri_modal",
+            "semantic": {
+                "model": args.semantic_model,
+                "query_prefix": args.query_prefix,
+                "doc_prefix": args.doc_prefix,
+            },
+            "tfidf": {
+                "dim": args.tfidf_dim,
+                "backend": args.tfidf_backend,
+            },
+            "graph": {
+                "model": args.graph_model,
+                "ner_backend": args.ner_backend,
+                "ner_model": args.ner_model or None,
+                "ner_use_noun_chunks": args.ner_use_noun_chunks,
+                "ner_batch_size": args.ner_batch_size,
+                "ner_n_process": args.ner_n_process,
+                "ner_allowed_labels": allowed_labels,
+                "entity_artifact_dir": args.entity_artifact_dir or None,
+                "entity_force_rebuild": args.entity_force_rebuild,
+            },
+        }
+        if args.device:
+            vectorizer_config["semantic"]["device"] = args.device
+        
+        vectorizer = create_vectorizer(vectorizer_config)
+        
+        index_config = {
+            "type": "faiss",
+            "factory": args.faiss_factory or None,
+            "metric": args.faiss_metric,
+            "nprobe": args.faiss_nprobe if args.faiss_nprobe > 0 else None,
+            "train_size": args.faiss_train_size,
+            "artifact_dir": args.index_artifact_dir or None,
+            "index_name": args.index_name,
+        }
+        index = create_index(index_config, vectorizer)
+        
+        weight_policy = create_weight_policy({"policy": args.policy})
+        reranker = create_reranker("tri_modal", vectorizer)
+        
         retr = HybridRetriever(
-            tfidf_dim=args.tfidf_dim,
-            semantic_model_name=args.semantic_model,
-            tfidf_backend=args.tfidf_backend,
-            query_prefix=args.query_prefix,
-            doc_prefix=args.doc_prefix,
-            graph_model_name=args.graph_model,
-            ner_backend=args.ner_backend,
-            ner_model=(args.ner_model or None),
-            ner_use_noun_chunks=args.ner_use_noun_chunks,
-            ner_batch_size=args.ner_batch_size,
-            ner_n_process=args.ner_n_process,
-            ner_allowed_labels=allowed_labels,
-            entity_artifact_dir=(args.entity_artifact_dir or None),
-            entity_force_rebuild=args.entity_force_rebuild,
-            device=args.device,
-            faiss_factory=(args.faiss_factory or None),
-            faiss_metric=args.faiss_metric,
-            faiss_nprobe=(args.faiss_nprobe or None if args.faiss_nprobe <= 0 else args.faiss_nprobe),
-            faiss_train_size=args.faiss_train_size,
-            index_artifact_dir=(args.index_artifact_dir or None),
-            index_name=args.index_name,
+            vectorizer=vectorizer,
+            index=index,
+            reranker=reranker,
+            weight_policy=weight_policy,
+            topk_first=args.topk_first,
         )
     elif args.retriever == "dense":
-        retr = DenseFaissStub(dim=args.sem_dim)  # Uses compatibility wrapper
+        # Map dimension to model (384 -> MiniLM, 768 -> mpnet, 1024 -> BGE-large)
+        model_map = {
+            384: "sentence-transformers/all-MiniLM-L6-v2",
+            768: "sentence-transformers/all-mpnet-base-v2",
+            1024: "BAAI/bge-large-en-v1.5",
+        }
+        model_name = model_map.get(args.sem_dim, "sentence-transformers/all-MiniLM-L6-v2")
+        retr = DenseFaiss(
+            model_name=model_name,
+            query_prefix=args.query_prefix,
+            doc_prefix=args.doc_prefix,
+        )
     else:
         retr = BM25Basic()
 

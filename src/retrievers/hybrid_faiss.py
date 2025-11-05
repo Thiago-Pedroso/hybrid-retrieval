@@ -17,89 +17,25 @@ class HybridRetriever(AbstractRetriever):
     
     def __init__(
         self,
-        # Modular components (new API)
-        vectorizer: Optional[AbstractVectorizer] = None,
-        index: Optional[AbstractIndex] = None,
-        reranker: Optional[AbstractReranker] = None,
-        weight_policy: Optional[AbstractWeightPolicy] = None,
+        vectorizer: AbstractVectorizer,
+        index: AbstractIndex,
+        reranker: AbstractReranker,
+        weight_policy: AbstractWeightPolicy,
         topk_first: int = 150,
-        # Legacy parameters (for backward compatibility)
-                 tfidf_dim: int = 1000,
-                 policy: str = "heuristic",
-                 semantic_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-                 query_prefix: str = "",
-                 doc_prefix: str = "",
-                 tfidf_backend: str = "sklearn",
-                 graph_model_name: str = "BAAI/bge-large-en-v1.5",
-                 ner_backend: str = "scispacy",
-                 ner_model: Optional[str] = None,
-                 ner_use_noun_chunks: bool = True,
-                 ner_batch_size: int = 128,
-                 ner_n_process: int = 4,
-                 ner_allowed_labels: Optional[List[str]] = None,
-                 entity_artifact_dir: Optional[str] = None,
-                 entity_force_rebuild: bool = False,
-                 device: Optional[str] = None,
-        faiss_factory: Optional[str] = None,
-                 faiss_metric: str = "ip",
-                 faiss_nprobe: Optional[int] = None,
-                 faiss_train_size: int = 0,
-                 index_artifact_dir: Optional[str] = None,
-        index_name: str = "hybrid.index",
     ):
-        # Use modular components if provided, otherwise create from legacy params
-        if vectorizer is not None:
-            self.vec = vectorizer
-        else:
-            # Legacy: create TriModalVectorizer from parameters
-            self.vec = TriModalVectorizer(
-            tfidf_dim=tfidf_dim,
-            semantic_model_name=semantic_model_name,
-            tfidf_backend=tfidf_backend,
-            query_prefix=query_prefix,
-            doc_prefix=doc_prefix,
-            graph_model_name=graph_model_name,
-            ner_backend=ner_backend,
-            ner_model=ner_model,
-            ner_use_noun_chunks=ner_use_noun_chunks,
-            ner_batch_size=ner_batch_size,
-            ner_n_process=ner_n_process,
-            ner_allowed_labels=ner_allowed_labels,
-            entity_artifact_dir=entity_artifact_dir,
-            entity_force_rebuild=entity_force_rebuild,
-            device=device,
-        )
+        """Initialize HybridRetriever with modular components.
         
-        if index is not None:
-            self.index = index
-        else:
-            # Legacy: create HybridIndex from parameters
-            self.index = HybridIndex(
-                vectorizer=self.vec,
-                faiss_factory=faiss_factory,
-                faiss_metric=faiss_metric,
-                faiss_nprobe=faiss_nprobe,
-                faiss_train_size=faiss_train_size,
-                artifact_dir=index_artifact_dir,
-                index_name=index_name,
-            )
-        
-        if reranker is not None:
-            self.reranker = reranker
-        else:
-            # Legacy: create reranker from vectorizer
-            if isinstance(self.vec, TriModalVectorizer):
-                self.reranker = TriModalReranker(self.vec)
-            else:
-                # For other vectorizers, reranker might not be applicable
-                self.reranker = None
-        
-        if weight_policy is not None:
-            self.policy = weight_policy
-        else:
-            # Legacy: create policy from string
-            self.policy = HeuristicLLMPolicy() if policy == "heuristic" else StaticPolicy()
-        
+        Args:
+            vectorizer: Vectorizer instance (must implement AbstractVectorizer)
+            index: Index instance (must implement AbstractIndex)
+            reranker: Reranker instance (must implement AbstractReranker)
+            weight_policy: Weight policy instance (must implement AbstractWeightPolicy)
+            topk_first: Number of candidates to retrieve before reranking
+        """
+        self.vec = vectorizer
+        self.index = index
+        self.reranker = reranker
+        self.policy = weight_policy
         self.topk_first = topk_first
         self._doc_map: Dict[str, str] = {}  # doc_id -> texto
 
