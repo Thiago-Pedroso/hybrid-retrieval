@@ -1,0 +1,42 @@
+experiment:
+  name: "example_tri_modal"
+  output_dir: "./outputs/experiments/example"
+
+dataset:
+  name: "scifact"
+  root: "./data/scifact/processed/beir"
+  split_preference: ["test", "dev", "validation", "train"]
+
+retrievers:
+  - name: "hybrid_tfidf_only"
+    type: "hybrid"
+    vectorizer:
+      type: "tfidf"
+      tfidf:
+        dim: 100
+        min_df: 1
+        backend: "sklearn"
+    fusion:
+      strategy: "weighted_cosine"
+      policy: "static"
+      weights: [1.0]
+    reranker:
+      type: "none"
+      topk_first: 10
+    index:
+      type: "faiss"
+      factory: null  # FlatIP
+      metric: "ip"
+
+metrics:
+  - "nDCG"
+  - "MRR"
+  - "Recall"
+  - "Precision"
+
+ks: [1, 3, 5, 10]
+
+output_formats:
+  - "csv"
+  - "json"
+

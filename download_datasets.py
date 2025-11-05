@@ -215,6 +215,91 @@ def normalize_scifact_claims(jsonl_path: Path, split_name: str) -> pd.DataFrame:
         })
     return pd.DataFrame(norm)
 
+# ---------- SQuAD (via Hugging Face) ----------
+
+def _lazy_hf_load_squad():
+    load_dataset = _lazy_import_datasets()
+    # SQuAD v1.1 (rajpurkar/squad) com splits 'train' e 'validation'
+    ds_train = load_dataset("rajpurkar/squad", split="train")
+    ds_dev   = load_dataset("rajpurkar/squad", split="validation")
+    return ds_train, ds_dev
+
+def _make_doc_id(title: str, context: str) -> str:
+    """
+    Gera um doc_id estável por parágrafo (title+context).
+    Usa MD5 do context para evitar ids gigantes, mas mantém o title legível.
+    """
+    base_title = (title or "").strip().replace("\t", " ").replace("\n", " ")
+    if not base_title:
+        base_title = "article"
+    h = hashlib.md5(context.encode("utf-8")).hexdigest()[:12]
+    return f"{base_title}::p_{h}"
+
+def convert_squad_split_to_beir(ds_split, split_name: str):
+    """
+    Converte um split do SQuAD (flattened) para três DataFrames:
+      - corpus:   doc_id, title, text
+      - queries:  query_id, query
+      - qrels:    query_id, doc_id, score, split
+    Estratégia:
+      - Cada linha do dataset HF é UMA QA: contém 'title', 'context', 'question', 'id' e 'answers'.
+      - Cada (title, context) vira UM documento (parágrafo).
+      - Cada QA vira UMA query ligada ao doc desse (title, context).
+    """
+    # 1) Construir corpus único (um doc por (title, context))
+    #    e um mapeamento (title, context) -> doc_id
+    key_to_docid = {}
+    corpus_rows = []
+    for ex in ds_split:
+        title = ex.get("title") or ""
+        context = ex["context"]
+        key = (title, context)
+        if key not in key_to_docid:
+            doc_id = _make_doc_id(title, context)
+            key_to_docid[key] = doc_id
+            corpus_rows.append({"doc_id": doc_id, "title": title, "text": context, "metadata": None})
+
+    # 2) Queries e qrels (uma query por QA; relevante = parágrafo da própria QA)
+    queries_rows = []
+    qrels_rows = []
+    for ex in ds_split:
+        qid = ex["id"]            # id da pergunta no SQuAD
+        question = ex["question"]
+        title = ex.get("title") or ""
+        context = ex["context"]
+        doc_id = key_to_docid[(title, context)]
+
+        queries_rows.append({"query_id": qid, "query": question})
+        qrels_rows.append({"query_id": qid, "doc_id": doc_id, "score": 1, "split": split_name})
+
+    df_corpus = pd.DataFrame.from_records(corpus_rows)
+    # evita duplicar queries no caso de alguma inconsistência
+    df_queries = pd.DataFrame.from_records(queries_rows).drop_duplicates(subset=["query_id"])
+    df_qrels   = pd.DataFrame.from_records(qrels_rows)
+
+    return df_corpus, df_queries, df_qrels
+
+def download_squad_v11_as_beir(root: Path, fmt: str):
+    ds_root = ensure_dir(root / "squad")
+    ensure_dir(ds_root / "raw" / "hf")  # mantemos a mesma estrutura de pastas
+    proc_dir = ensure_dir(ds_root / "processed" / "beir")
+
+    ds_train, ds_dev = _lazy_hf_load_squad()
+
+    # Converte train e validation (vamos chamar validation de "test")
+    df_corpus_tr, df_queries_tr, df_qrels_tr = convert_squad_split_to_beir(ds_train, "train")
+    df_corpus_te, df_queries_te, df_qrels_te = convert_squad_split_to_beir(ds_dev,   "test")
+
+    # Unifica corpus por doc_id (há sobreposição de artigos/parágrafos entre splits)
+    df_corpus = pd.concat([df_corpus_tr, df_corpus_te], ignore_index=True).drop_duplicates(subset=["doc_id"])
+    df_queries = pd.concat([df_queries_tr, df_queries_te], ignore_index=True).drop_duplicates(subset=["query_id"])
+    df_qrels   = pd.concat([df_qrels_tr, df_qrels_te], ignore_index=True)
+
+    save_df(df_corpus, proc_dir / f"corpus.{fmt}", fmt)
+    save_df(df_queries, proc_dir / f"queries.{fmt}", fmt)
+    save_df(df_qrels,   proc_dir / f"qrels.{fmt}",   fmt)
+
+    print(f"[OK] SQuAD v1.1 (HF) salvo em {proc_dir}")
 
 # -------------------- Downloaders --------------------
 
@@ -394,6 +479,8 @@ def main():
             if args.skip_beir:
                 print("[AVISO] NFCorpus só está configurado via BEIR neste script. --skip-beir ignorado para 'nfcorpus'.")
             download_beir_zip_dataset(root, "nfcorpus", fmt=fmt)
+        elif name == "squad":
+            download_squad_v11_as_beir(root, fmt=fmt)
         else:
             print(f"[IGNORADO] Dataset desconhecido: {name}")
 

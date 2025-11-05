@@ -96,8 +96,8 @@ class GraphRetriever(AbstractRetriever):
             self.vec.fit_corpus(texts)
 
         with log_time(_log, "Encoding documents (Graph)"):
-            vecs = [self.vec.encode_text(t) for t in texts]
-            dim = self.vec.dim if vecs else 1
+            vecs = [self.vec.encode_text(t, is_query=False) for t in texts]
+            dim = self.vec.total_dim if vecs else 1
             self.doc_mat = np.stack(vecs, axis=0).astype(np.float32) if vecs else np.zeros((0, dim), dtype=np.float32)
 
         if self._try_load():
@@ -108,7 +108,7 @@ class GraphRetriever(AbstractRetriever):
             with log_time(_log, "Construindo FAISS IndexFlatIP"):
                 self.faiss_helper.build_from_matrix(self.doc_ids, self.doc_mat)
                 self.index = self.faiss_helper.index
-            _log.info(f"  ✓ FAISS IndexFlatIP: {self.index.ntotal} vetores, dim={self.vec.dim}")
+            _log.info(f"  ✓ FAISS IndexFlatIP: {self.index.ntotal} vetores, dim={self.vec.total_dim}")
             self._save()
         else:
             self.index = None

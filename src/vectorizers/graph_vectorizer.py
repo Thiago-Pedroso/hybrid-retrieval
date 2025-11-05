@@ -1,13 +1,16 @@
 from __future__ import annotations
 import numpy as np
-from typing import Iterable, Optional, List
+from typing import Iterable, Optional, List, Dict
 from pathlib import Path
 from ..encoders.entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
 from ..utils.logging import get_logger, log_time
+from ..core.interfaces import AbstractVectorizer
 
 _log = get_logger("graph.vectorizer")
 
-class GraphVectorizer:
+class GraphVectorizer(AbstractVectorizer):
+    """Graph/entity-based vectorizer."""
+    
     def __init__(self,
                  graph_model_name: str = "BAAI/bge-large-en-v1.5",
                  device: Optional[str] = None,
@@ -41,17 +44,26 @@ class GraphVectorizer:
         )
         self._fitted = False
 
-    def fit_corpus(self, docs_texts: Iterable[str]):
+    def fit_corpus(self, docs_texts: Iterable[str]) -> None:
+        """Fit graph encoder on corpus."""
         docs = list(docs_texts)
         with log_time(_log, "Fit Graph (NER + IDF)"):
             self.encoder.fit(docs)
         self._fitted = True
         _log.info(f"✓ Graph fitted: dim={self.encoder.dim}, ents={len(self.encoder.ent2idf)}")
 
-    def encode_text(self, text: str) -> np.ndarray:
+    def encode_text(self, text: str, is_query: bool = False) -> Dict[str, np.ndarray]:
+        """Encode text as graph/entity vector."""
         assert self._fitted, "Chame fit_corpus() antes de encode_text()"
-        return self.encoder.encode_text(text)
+        v = self.encoder.encode_text(text)
+        return {"g": v}
+
+    def concat(self, parts: Dict[str, np.ndarray]) -> np.ndarray:
+        """Return graph vector directly (already single vector)."""
+        return parts["g"]
 
     @property
-    def dim(self) -> int:
+    def total_dim(self) -> int:
+        """Total dimension (graph/entity only)."""
         return int(self.encoder.dim)
+    

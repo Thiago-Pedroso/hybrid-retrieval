@@ -13,6 +13,7 @@ except Exception:
     _HAS_FAISS = False
 
 from ..vectorizers.tri_modal_vectorizer import TriModalVectorizer
+from ..core.interfaces import AbstractIndex, AbstractVectorizer
 from ..utils.logging import get_logger, log_time, ProgressLogger
 
 _log = get_logger("tri_modal.index")
@@ -33,9 +34,11 @@ def _set_nprobe(index, nprobe: int):
     except Exception:
         pass
 
-class HybridIndex:
+class HybridIndex(AbstractIndex):
+    """Hybrid index for multi-modal vectors using FAISS."""
+    
     def __init__(self,
-                 vectorizer: TriModalVectorizer,
+                 vectorizer: AbstractVectorizer,  # Changed from TriModalVectorizer to AbstractVectorizer
                  faiss_factory: Optional[str] = None,   # ex.: "OPQ64,IVF4096,PQ64x8"
                  faiss_metric: str = "ip",              # "ip" | "l2"
                  faiss_nprobe: Optional[int] = None,
@@ -111,7 +114,7 @@ class HybridIndex:
                     progress.update(1)
                 except Exception as e:
                     _log.error(f"Erro ao encodar doc {doc_id}: {e}")
-                    v = np.zeros(self.vec.total_dim(), dtype=np.float32)
+                    v = np.zeros(self.vec.total_dim, dtype=np.float32)
                     ids.append(doc_id)
                     vecs.append(v)
                     progress.update(1)

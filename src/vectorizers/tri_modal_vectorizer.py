@@ -5,10 +5,11 @@ from pathlib import Path
 from ..encoders.encoders import HFSemanticEncoder, TfidfEncoder, l2norm
 from ..encoders.entity_encoder import EntityEncoderReal, NERConfig, CacheConfig
 from ..utils.logging import get_logger, log_time
+from ..core.interfaces import AbstractVectorizer
 
 _log = get_logger("tri_modal.vectorizer")
 
-class TriModalVectorizer:
+class TriModalVectorizer(AbstractVectorizer):
     def __init__(self,
                  tfidf_dim: int = 1000,
                  min_df: int = 2,
@@ -128,7 +129,9 @@ class TriModalVectorizer:
         v = np.concatenate([parts["s"], parts["t"], parts["g"]]).astype(np.float32)
         return l2norm(v)
 
+    @property
     def total_dim(self) -> int:
+        """Total dimension of concatenated vector."""
         return int(self.slice_dims.get("s", 0) + self.slice_dims.get("t", 0) + self.slice_dims.get("g", 0))
 
 

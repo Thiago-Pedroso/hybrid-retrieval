@@ -1,8 +1,11 @@
 from pathlib import Path
 from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
 from src.retrievers.bm25_basic import BM25Basic
-from src.retrievers.dense_faiss import DenseFaissStub
+from src.retrievers.dense_faiss import DenseFaiss
 from src.retrievers.hybrid_faiss import HybridRetriever
+from src.vectorizers.factory import create_vectorizer
+from src.indexes.factory import create_index
+from src.fusion.factory import create_weight_policy, create_reranker
 
 def _prep_scifact_subset(n_docs=1000, n_queries=50):
     root = Path("./data/scifact/processed/beir").resolve()
@@ -38,14 +41,31 @@ def test_bm25_smoke():
 
 def test_dense_smoke():
     docs, qlist = _prep_scifact_subset()
-    retr = DenseFaissStub(dim=128)
+    # DenseFaiss doesn't use dim parameter anymore, uses model directly
+    retr = DenseFaiss(model_name="sentence-transformers/all-MiniLM-L6-v2")
     retr.build_index(docs)
     res = retr.retrieve(qlist, k=10)
     _assert_k(res, qlist, 10)
 
 def test_hybrid_smoke():
     docs, qlist = _prep_scifact_subset()
-    retr = HybridRetriever(tfidf_dim=256, topk_first=50, policy="heuristic")
+    # Create components using new modular API
+    vectorizer = create_vectorizer({
+        "type": "tri_modal",
+        "semantic": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+        "tfidf": {"dim": 256},
+        "graph": {"model": "BAAI/bge-large-en-v1.5"},
+    })
+    index = create_index({"type": "faiss", "metric": "ip"}, vectorizer)
+    weight_policy = create_weight_policy({"policy": "heuristic"})
+    reranker = create_reranker("tri_modal", vectorizer)
+    retr = HybridRetriever(
+        vectorizer=vectorizer,
+        index=index,
+        reranker=reranker,
+        weight_policy=weight_policy,
+        topk_first=50,
+    )
     retr.build_index(docs)
     res = retr.retrieve(qlist, k=10)
     _assert_k(res, qlist, 10)
