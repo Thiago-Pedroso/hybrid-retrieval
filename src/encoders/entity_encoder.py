@@ -7,8 +7,11 @@ import re
 import json
 import warnings
 import hashlib
+import threading
 
 from .encoders import HFSemanticEncoder, l2norm
+
+_spacy_lock = threading.Lock()
 
 @dataclass
 class NERConfig:
@@ -79,6 +82,10 @@ class EntityEncoderReal:
 
         # cache de embeddings (em memória)
         self._emb_cache: Dict[str, np.ndarray] = {}
+        
+        # cache persistido em memória (carregado uma vez)
+        self._emb_mat: Optional[np.ndarray] = None
+        self._emap: Optional[Dict[str, int]] = None
 
         # persistência
         self._idf_path = None
@@ -191,43 +198,8 @@ class EntityEncoderReal:
 
         return nlp
 
-        # Opcional: EntityRuler com padrões leves por domínio (finance/biomed) + custom
-        try:
-            if cfg.use_entity_ruler:
-                before = "ner" if "ner" in getattr(nlp, "pipe_names", []) else None
-                ruler = nlp.add_pipe("entity_ruler", before=before)
-                patterns: List[Dict] = []
-                if cfg.add_finance_rules:
-                    patterns += [
-                        {"label": "ORG", "pattern": "Federal Reserve"},
-                        {"label": "ORG", "pattern": "Fed"},
-                        {"label": "ORG", "pattern": "Nasdaq"},
-                        {"label": "ORG", "pattern": "Dow Jones"},
-                        {"label": "ORG", "pattern": "S&P 500"},
-                        {"label": "MONEY_TERM", "pattern": "interest rates"},
-                        {"label": "MONEY_TERM", "pattern": "equity market"},
-                    ]
-                    patterns += [{
-                        "label": "TICKER",
-                        "pattern": [{"TEXT": {"REGEX": "^[A-Z]{1,5}$"}}]
-                    }]
-                if cfg.add_biomed_rules:
-                    patterns += [
-                        {"label": "DISEASE_TERM", "pattern": "COVID-19"},
-                        {"label": "DISEASE_TERM", "pattern": "SARS-CoV-2"},
-                        {"label": "BIOMED_TERM", "pattern": "mRNA"},
-                        {"label": "BIOMED_TERM", "pattern": "clinical trials"},
-                    ]
-                if cfg.ruler_patterns:
-                    patterns += list(cfg.ruler_patterns)
-                if patterns:
-                    ruler.add_patterns(patterns)
-        except Exception as e:
-            warnings.warn(f"[EntityEncoder] Falha ao configurar EntityRuler: {e}")
-
-        return nlp
-
     _simple_tok = re.compile(r"[A-Za-z][A-Za-z0-9_\-/\.]{1,}")
+    _STOP = set(["the", "this", "that", "these", "those", "and", "or", "in", "of", "for", "to", "with", "on", "by", "an", "a", "is", "are", "be"])
 
     def _extract_simple(self, text: str) -> List[str]:
         cands = []
@@ -238,10 +210,9 @@ class EntityEncoderReal:
         for t in cands:
             t = re.sub(r"\s+", " ", t).strip()
             t = t.strip(".,;:()[]{}").lower()
-            if len(t) >= 2:
+            # Filtrar stopwords básicas
+            if len(t) >= 2 and t not in self._STOP:
                 normed.append(t)
-        if len(normed) > self.max_entities_per_text:
-            normed = normed[: self.max_entities_per_text]
         return normed
 
     def _extract_entities_from_doc(self, doc) -> List[str]:
@@ -253,7 +224,9 @@ class EntityEncoderReal:
                 txt = (e.text or "").strip()
                 if txt:
                     ents.append(txt)
-        if self.ner_cfg.use_noun_chunks and hasattr(doc, "noun_chunks"):
+        # Não incluir noun_chunks quando allowed_labels está ativo (para evitar ruído)
+        use_chunks = self.ner_cfg.use_noun_chunks and not self.ner_cfg.allowed_labels
+        if use_chunks and hasattr(doc, "noun_chunks"):
             try:
                 for chunk in doc.noun_chunks:
                     txt = (chunk.text or "").strip()
@@ -267,8 +240,7 @@ class EntityEncoderReal:
             t = t.strip(".,;:()[]{}").lower()
             if len(t) >= 2:
                 normed.append(t)
-        if len(normed) > self.max_entities_per_text:
-            normed = normed[: self.max_entities_per_text]
+
         return normed
 
     def _extract_entities_batch(self, texts: Iterable[str]) -> List[List[str]]:
@@ -276,9 +248,28 @@ class EntityEncoderReal:
             return [self._extract_simple(t) for t in texts]
         out: List[List[str]] = []
         
-        for doc in self._nlp.pipe(texts, batch_size=self.ner_cfg.batch_size,
-                                  n_process=self.ner_cfg.n_process, disable=[]):
-            out.append(self._extract_entities_from_doc(doc))
+        texts_list = list(texts)
+        import platform
+        is_macos = platform.system() == 'Darwin'
+        use_multiprocessing = (not is_macos and 
+                              self.ner_cfg.n_process > 1 and 
+                              len(texts_list) > 1)
+        
+        # Preparar parâmetros do pipe
+        pipe_kwargs = {
+            'batch_size': self.ner_cfg.batch_size,
+            'disable': []
+        }
+        if use_multiprocessing:
+            pipe_kwargs['n_process'] = self.ner_cfg.n_process
+
+        if is_macos:
+            with _spacy_lock:
+                for doc in self._nlp.pipe(texts_list, **pipe_kwargs):
+                    out.append(self._extract_entities_from_doc(doc))
+        else:
+            for doc in self._nlp.pipe(texts_list, **pipe_kwargs):
+                out.append(self._extract_entities_from_doc(doc))
         return out
 
     def fit(self, corpus_texts: Iterable[str]):
@@ -329,32 +320,44 @@ class EntityEncoderReal:
         _log.info(f"✓ NER fit concluído: {len(self.ent2idf)} entidades únicas (min_df={self.min_df})")
         self._try_save_idf()
 
+    def _load_emb_cache_files(self):
+        """Carrega arquivos de cache de embeddings uma vez em memória."""
+        if self._emb_mat is not None and self._emap is not None:
+            return  # Já carregado
+        
+        if self._emap_path and self._embnpy_path and self._emap_path.exists() and self._embnpy_path.exists():
+            try:
+                with open(self._emap_path, "r", encoding="utf-8") as f:
+                    self._emap = json.load(f)
+                self._emb_mat = np.load(self._embnpy_path)
+            except Exception as e:
+                warnings.warn(f"[EntityEncoder] Erro ao carregar cache de embeddings: {e}")
+                self._emap = None
+                self._emb_mat = None
+
     def _get_emb(self, ent: str) -> np.ndarray:
         v = self._emb_cache.get(ent)
         if v is not None:
             return v
-        # tenta carregar da matriz persistida CORRETA (versionada por assinatura)
-        if self._emap_path and self._embnpy_path and self._emap_path.exists() and self._embnpy_path.exists():
-            try:
-                with open(self._emap_path, "r", encoding="utf-8") as f:
-                    emap = json.load(f)
-                if ent in emap:
-                    row = int(emap[ent])
-                    mat = np.load(self._embnpy_path)
-                    vv = mat[row].astype(np.float32)
-                    # VALIDAÇÃO ROBUSTA: checa dimensão
-                    if vv.shape[0] == self.dim:
-                        self._emb_cache[ent] = vv
-                        return vv
-                    else:
-                        # Cache com dimensão errada - ignora e regenera
-                        warnings.warn(
-                            f"[EntityEncoder] Cache com dimensão incorreta para '{ent}': "
-                            f"esperado {self.dim}, encontrado {vv.shape[0]}. "
-                            f"Regenerando embedding (considere usar --entity-force-rebuild)."
-                        )
-            except Exception as e:
-                warnings.warn(f"[EntityEncoder] Erro ao carregar cache para '{ent}': {e}")
+        
+        # Carrega cache de arquivos uma vez (se ainda não carregado)
+        self._load_emb_cache_files()
+        
+        # Tenta usar cache em memória
+        if self._emap is not None and self._emb_mat is not None and ent in self._emap:
+            row = int(self._emap[ent])
+            vv = self._emb_mat[row].astype(np.float32)
+            # VALIDAÇÃO ROBUSTA: checa dimensão
+            if vv.shape[0] == self.dim:
+                self._emb_cache[ent] = vv
+                return vv
+            else:
+                # Cache com dimensão errada - ignora e regenera
+                warnings.warn(
+                    f"[EntityEncoder] Cache com dimensão incorreta para '{ent}': "
+                    f"esperado {self.dim}, encontrado {vv.shape[0]}. "
+                    f"Regenerando embedding (considere usar --entity-force-rebuild)."
+                )
 
         # embutir e cachear
         v = self.embedder.encode_text(ent, is_query=False)
@@ -381,8 +384,18 @@ class EntityEncoderReal:
         if not tf:
             return np.zeros(self.dim, dtype=np.float32)
 
+        # Ordenar entidades por score TF*IDF (relevância) e aplicar cap apenas aqui
+        scored_entities = [(e, tf[e] * self.ent2idf[e]) for e in tf.keys()]
+        scored_entities.sort(key=lambda x: x[1], reverse=True)
+        
+        # Aplicar max_entities_per_text apenas nas top-k entidades por relevância
+        if self.max_entities_per_text > 0 and len(scored_entities) > self.max_entities_per_text:
+            scored_entities = scored_entities[:self.max_entities_per_text]
+
         acc = np.zeros(self.dim, dtype=np.float32)
-        for e, f in tf.items():
+        for e, _ in scored_entities:
+            # Recalcular peso: tf já está no score, então dividimos pelo idf para obter tf
+            f = tf[e]
             w = float(f) * self.ent2idf[e]
             acc += w * self._get_emb(e)
         return l2norm(acc)

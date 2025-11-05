@@ -1,7 +1,16 @@
 from __future__ import annotations
 import re
 import numpy as np
+import os
+import platform
 from typing import Iterable, List, Dict, Optional, Callable
+
+if platform.system() == 'Darwin':
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+    os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 _tok = re.compile(r"[A-Za-z0-9_]+")
 
@@ -44,6 +53,13 @@ class HFSemanticEncoder:
         # tenta sentence-transformers
         try:
             from sentence_transformers import SentenceTransformer
+            if platform.system() == 'Darwin':
+                try:
+                    import torch
+                    torch.set_num_threads(1)
+                    torch.set_num_interop_threads(1)
+                except Exception:
+                    pass
             self._model = SentenceTransformer(model_name, device=device or "cpu")
             # detecta dim
             try:
@@ -55,6 +71,9 @@ class HFSemanticEncoder:
             # tenta transformers
             try:
                 import torch
+                if platform.system() == 'Darwin':
+                    torch.set_num_threads(1)
+                    torch.set_num_interop_threads(1)
                 from transformers import AutoTokenizer, AutoModel
                 self._tokenizer = AutoTokenizer.from_pretrained(model_name)
                 self._model = AutoModel.from_pretrained(model_name)

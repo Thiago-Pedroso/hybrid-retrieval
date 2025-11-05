@@ -16,6 +16,12 @@ from __future__ import annotations
 import os, platform
 if platform.system() == 'Darwin':
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    # Limitar threads para evitar segmentation faults no macOS
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    os.environ["NUMEXPR_NUM_THREADS"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import argparse
 import sys
@@ -49,14 +55,41 @@ def _default_dataset_root(name: str) -> Path:
 
 
 def _ner_defaults_for(dataset_name: str):
-    """Heurística leve de NER/labels por dataset."""
-    if dataset_name.lower() == "scifact":
-        return dict(
+    """Configurações NER otimizadas por dataset (baseadas nos experimentos do graph_ner_validation)."""
+    configs = {
+        "scifact": dict(
             ner_backend="scispacy",
-            ner_model=None,
-            ner_allowed_labels=["DISEASE", "CHEMICAL"],  # se BC5CDR estiver instalado
-        )
-    return dict(ner_backend="spacy", ner_model=None, ner_allowed_labels=None)
+            ner_model="en_core_sci_md",
+            ner_use_noun_chunks=False,
+            ner_allowed_labels=None,
+            entity_min_df=1,
+            max_entities_per_text=128,
+        ),
+        "fiqa": dict(
+            ner_backend="spacy",
+            ner_model="en_core_web_md",
+            ner_use_noun_chunks=False,
+            ner_allowed_labels=None,
+            entity_min_df=1,
+            max_entities_per_text=128,
+        ),
+        "nfcorpus": dict(
+            ner_backend="scispacy",
+            ner_model="en_core_sci_md",
+            ner_use_noun_chunks=False,
+            ner_allowed_labels=None,
+            entity_min_df=2,
+            max_entities_per_text=128,
+        ),
+    }
+    return configs.get(dataset_name.lower(), dict(
+        ner_backend="spacy",
+        ner_model=None,
+        ner_use_noun_chunks=False,
+        ner_allowed_labels=None,
+        entity_min_df=2,
+        max_entities_per_text=128,
+    ))
 
 
 def dataset_stats_both(dataset_root: Path) -> Dict[str, int]:
@@ -89,11 +122,15 @@ def _run_once(
     tfidf_dim: int,
     min_df: int,
     tfidf_backend: str,
+    tfidf_scale_multiplier: float,
     device: Optional[str],
     entity_artifacts: Optional[Path],
     entity_force_rebuild: bool,
     ner_batch_size: int,
     ner_n_process: int,
+    ner_use_noun_chunks: Optional[str],
+    entity_min_df: Optional[int],
+    max_entities_per_text: Optional[int],
     index_artifacts: Optional[Path],
     faiss_factory: Optional[str],
     faiss_metric: str,
@@ -127,6 +164,14 @@ def _run_once(
     # defaults de NER por dataset
     ds_name = dataset_root.parent.parent.name  # "scifact"/"fiqa"/"nfcorpus"
     ner_kwargs = _ner_defaults_for(ds_name)
+    
+    # Sobrescrever com argumentos da linha de comando se fornecidos
+    if ner_use_noun_chunks is not None:
+        ner_kwargs["ner_use_noun_chunks"] = ner_use_noun_chunks.lower() == "true"
+    if entity_min_df is not None:
+        ner_kwargs["entity_min_df"] = entity_min_df
+    if max_entities_per_text is not None:
+        ner_kwargs["max_entities_per_text"] = max_entities_per_text
 
     # vetorizer tri-modal
     # tfidf_dim: 0 = vocabulário ilimitado, >0 = max_features
@@ -137,12 +182,16 @@ def _run_once(
         tfidf_dim=tfidf_dim_val,
         min_df=min_df,
         query_prefix="", doc_prefix="",
+        tfidf_scale_multiplier=tfidf_scale_multiplier, 
         graph_model_name=graph_model,          # BGE-Large no slice g
         ner_backend=ner_kwargs["ner_backend"],
         ner_model=ner_kwargs["ner_model"],
+        ner_use_noun_chunks=ner_kwargs["ner_use_noun_chunks"],
         ner_allowed_labels=ner_kwargs["ner_allowed_labels"],
         ner_batch_size=ner_batch_size,
         ner_n_process=ner_n_process,
+        entity_min_df=ner_kwargs["entity_min_df"],
+        entity_max_entities_per_text=ner_kwargs["max_entities_per_text"],
         entity_artifact_dir=str(entity_artifacts) if entity_artifacts else None,
         entity_force_rebuild=entity_force_rebuild,
         device=device,
@@ -214,13 +263,25 @@ def parse_args():
     m.add_argument("--tfidf-min-df", type=int, default=2,
                    help="Min document frequency para TF-IDF (default: 2).")
     m.add_argument("--tfidf-backend", type=str, choices=["sklearn", "pyserini"], default="sklearn")
+    m.add_argument("--tfidf-scale-multiplier", type=float, default=1.25,
+                   help="Multiplicador de escalonamento TF-IDF.")
     m.add_argument("--device", type=str, default=None, help="ex.: cuda:0 ou cpu")
     
     n = p.add_argument_group("NER e Entidades")
-    n.add_argument("--ner-batch-size", type=int, default=32,
-                   help="Batch size para NER")
-    n.add_argument("--ner-n-process", type=int, default=4,
-                   help="Processos paralelos para NER")
+    # macOS precisa de batch_size menor para evitar crashes
+    default_batch_size = 16 if platform.system() == 'Darwin' else 32
+    n.add_argument("--ner-batch-size", type=int, default=default_batch_size,
+                   help=f"Batch size para NER (default: {default_batch_size}, ajustado para macOS)")
+    # macOS tem problemas com multiprocessing no spaCy - usar 1 por padrão
+    default_n_process = 1 if platform.system() == 'Darwin' else 4
+    n.add_argument("--ner-n-process", type=int, default=default_n_process,
+                   help=f"Processos paralelos para NER (default: {default_n_process}, ajustado para macOS)")
+    n.add_argument("--ner-use-noun-chunks", type=str, choices=["true", "false"], default=None,
+                   help="Usar noun chunks no NER (true/false). Se não fornecido, usa padrão otimizado por dataset.")
+    n.add_argument("--entity-min-df", type=int, default=None,
+                   help="Min document frequency para entidades (default: usa otimizado por dataset).")
+    n.add_argument("--max-entities-per-text", type=int, default=None,
+                   help="Máximo de entidades por texto (default: 128, usa otimizado por dataset).")
 
     # artefatos/caches
     a = p.add_argument_group("Artefatos")
@@ -285,11 +346,15 @@ def main_one_dataset(ds_name: str, ds_root: Path, args) -> pd.DataFrame:
             tfidf_dim=args.tfidf_dim,
             min_df=args.tfidf_min_df,
             tfidf_backend=args.tfidf_backend,
+            tfidf_scale_multiplier=args.tfidf_scale_multiplier,
             device=args.device,
             entity_artifacts=ent_dir,
             entity_force_rebuild=args.entity_force_rebuild,
             ner_batch_size=args.ner_batch_size,
             ner_n_process=args.ner_n_process,
+            ner_use_noun_chunks=args.ner_use_noun_chunks,
+            entity_min_df=args.entity_min_df,
+            max_entities_per_text=args.max_entities_per_text,
             index_artifacts=idx_dir,
             faiss_factory=(args.faiss_factory or None),
             faiss_metric=args.faiss_metric,
