@@ -3,10 +3,11 @@ import numpy as np
 from typing import Dict, Iterable, Optional
 from ..encoders.encoders import HFSemanticEncoder, TfidfEncoder, l2norm
 from ..utils.logging import get_logger, log_time
+from ..core.interfaces import AbstractVectorizer
 
 _log = get_logger("bi_modal.vectorizer")
 
-class BiModalVectorizer:
+class BiModalVectorizer(AbstractVectorizer):
     """
     Vectorizer híbrido bi-modal: semântico (s) + lexical (t).
     Concatena [s, t'] onde t' = t̂ × √(D_s / D_t) (escalonamento proporcional à raiz).
@@ -87,6 +88,8 @@ class BiModalVectorizer:
         v = np.concatenate([parts["s"], parts["t"]]).astype(np.float32)
         return l2norm(v)
 
+    @property
     def total_dim(self) -> int:
+        """Total dimension of concatenated vector."""
         return int(self.slice_dims.get("s", 0) + self.slice_dims.get("t", 0))
 
