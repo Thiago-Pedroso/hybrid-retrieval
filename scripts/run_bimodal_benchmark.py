@@ -1,0 +1,328 @@
+"""
+Benchmark bi-modal (semântico + TF-IDF) sem grafo, similar ao run_prerank_ab.py.
+Compara MiniLM vs BGE-Large no índice híbrido (s+t).
+
+Exemplos:
+  python scripts/run_bimodal_benchmark.py --dataset scifact --k 10
+  python scripts/run_bimodal_benchmark.py --dataset scifact --faiss-factory "OPQ64,IVF4096,PQ64x8" --faiss-nprobe 64
+  python scripts/run_bimodal_benchmark.py --all --k 10 --csv-out ./outputs/bimodal_all.csv
+"""
+
+from __future__ import annotations
+
+import os, platform
+if platform.system() == 'Darwin':
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+    os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+import argparse
+import sys
+import time
+from pathlib import Path
+from typing import Dict, List, Tuple, Optional
+import pandas as pd
+
+import multiprocessing
+try:
+    multiprocessing.set_start_method('spawn', force=True)
+except RuntimeError:
+    pass
+
+# No macOS, força CPU por padrão para evitar segmentation faults com MPS
+if platform.system() == 'Darwin':
+    _DEFAULT_DEVICE = "cpu"
+else:
+    _DEFAULT_DEVICE = None
+
+# --- torna o repo importável mesmo se chamado de qualquer lugar
+THIS = Path(__file__).resolve()
+ROOT = THIS.parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.datasets.loader import load_beir_dataset, select_split, as_documents, as_queries
+from src.eval.evaluator import evaluate_predictions
+from src.vectorizers.bi_modal_vectorizer import BiModalVectorizer
+from src.indexes.hybrid_index import HybridIndex
+from src.utils.io import ensure_dir
+from src.utils.logging import get_logger
+
+
+def _default_dataset_root(name: str) -> Path:
+    return ROOT / "data" / name / "processed" / "beir"
+
+
+def dataset_stats_both(dataset_root: Path) -> Dict[str, int]:
+    """Retorna estatísticas em dois formatos: 'paper-like' e 'BEIR-like'."""
+    corpus, queries, qrels = load_beir_dataset(dataset_root)
+    split = select_split(qrels, ("test", "dev", "validation", "train"))
+    split_eval = "test" if "test" in set(qrels["split"]) else split
+    qrels_eval = qrels[qrels["split"] == split_eval].copy()
+
+    # paper-like: Qrels* := número de QUERIES no split avaliado
+    test_queries = qrels_eval["query_id"].nunique()
+
+    # BEIR-like: pares (query, doc) relevantes no split avaliado
+    qrels_pairs = len(qrels_eval)
+
+    return {
+        "corpus_size": len(corpus),
+        "queries_total": len(queries),
+        "qrels_star_paper_like": test_queries,   # o que o paper chama de "Qrels"
+        "qrels_test_pairs_beir": qrels_pairs,    # BEIR (pares)
+        "split_eval": split_eval,
+    }
+
+
+def _run_once(
+    dataset_root: Path,
+    qrels_path: Optional[Path],
+    semantic_model: str,
+    tfidf_dim: int,
+    min_df: int,
+    tfidf_backend: str,
+    tfidf_scale_multiplier: float,
+    device: Optional[str],
+    index_artifacts: Optional[Path],
+    faiss_factory: Optional[str],
+    faiss_metric: str,
+    faiss_nprobe: Optional[int],
+    faiss_train_size: int,
+    k_eval: int,
+) -> Tuple[pd.DataFrame, Dict[str, List[Tuple[str, float]]]]:
+    """Executa a fase pré-rerank (índice híbrido bi-modal) para um modelo semântico."""
+    corpus, queries, qrels = load_beir_dataset(dataset_root)
+    # Qrels custom opcional
+    if qrels_path:
+        qp = Path(qrels_path)
+        if qp.suffix.lower() == ".jsonl":
+            qrels = pd.read_json(qp, lines=True)
+        elif qp.suffix.lower() == ".parquet":
+            qrels = pd.read_parquet(qp, engine="pyarrow")
+        else:
+            raise ValueError(f"Formato não suportado para qrels: {qp}")
+        qrels["doc_id"] = qrels["doc_id"].astype(str)
+        qrels["query_id"] = qrels["query_id"].astype(str)
+    # split preferido: test > dev/validation > train
+    split = select_split(qrels, ("test", "dev", "validation", "train"))
+    split_eval = "test" if "test" in set(qrels["split"]) else split
+    qrels_eval = qrels[qrels["split"] == split_eval].copy()
+
+    docs = as_documents(corpus)
+    qids = set(qrels_eval["query_id"].unique().tolist())
+    queries_eval = queries[queries["query_id"].isin(qids)]
+    qlist = as_queries(queries_eval)
+
+    # vetorizer bi-modal (apenas s + t)
+    # tfidf_dim: 0 = vocabulário ilimitado, >0 = max_features
+    tfidf_dim_val = None if tfidf_dim == 0 else tfidf_dim
+    vec = BiModalVectorizer(
+        semantic_model_name=semantic_model,
+        tfidf_backend=tfidf_backend,
+        tfidf_dim=tfidf_dim_val,
+        min_df=min_df,
+        query_prefix="", 
+        doc_prefix="",
+        tfidf_scale_multiplier=tfidf_scale_multiplier, 
+        device=device,
+    )
+
+    # fit no corpus
+    t0 = time.time()
+    vec.fit_corpus((d.title or "") + " " + (d.text or "") for d in docs)
+    t_fit = time.time() - t0
+
+    # índice FAISS (reutiliza HybridIndex mas com vectorizer bi-modal)
+    index = HybridIndex(
+        vectorizer=vec,
+        faiss_factory=(faiss_factory or None),
+        faiss_metric=faiss_metric,
+        faiss_nprobe=faiss_nprobe,
+        faiss_train_size=faiss_train_size,
+        artifact_dir=str(index_artifacts) if index_artifacts else None,
+        index_name="bimodal.index",
+    )
+
+    t0 = time.time()
+    index.build((d.doc_id, (d.title or "") + " " + (d.text or "")) for d in docs)
+    t_index = time.time() - t0
+
+    # retrieve pré-rerank
+    preds: Dict[str, List[Tuple[str, float]]] = {}
+    t_retrieve = 0.0
+    for q in qlist:
+        t1 = time.time()
+        q_vec = vec.concat(vec.encode_text(q.text, is_query=True))
+        topk = index.search(q_vec, topk=max(10, k_eval))
+        t_retrieve += (time.time() - t1)
+        preds[q.query_id] = topk[:k_eval]
+
+    # avaliação
+    metrics = evaluate_predictions(preds, qrels_eval, ks=(k_eval,))
+    metrics["config"] = semantic_model.split("/")[-1]
+    metrics["split"] = split_eval
+    metrics["t_fit_sec"] = round(t_fit, 3)
+    metrics["t_index_sec"] = round(t_index, 3)
+    metrics["t_retrieve_sec"] = round(t_retrieve, 3)
+    return metrics, preds
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Benchmark bi-modal (s+t) sem grafo, similar ao run_prerank_ab.py")
+    # dataset
+    g = p.add_argument_group("Dataset")
+    g.add_argument("--dataset", type=str, choices=["scifact", "fiqa", "nfcorpus"], default="scifact",
+                   help="Nome do dataset (usa caminho padrão ./data/<name>/processed/beir).")
+    g.add_argument("--dataset-root", type=str, default="",
+                   help="Se quiser informar o caminho exato do dataset (prioriza sobre --dataset).")
+    g.add_argument("--all", action="store_true", default=False, help="Roda A/B em todos os datasets.")
+    g.add_argument("--k", type=int, default=10, help="k para métricas @k")
+    g.add_argument("--qrels-path", type=str, default="",
+                   help="Opcional: caminho para qrels custom (jsonl/parquet) com coluna 'split'.")
+
+    # modelos
+    m = p.add_argument_group("Modelos")
+    m.add_argument("--semantic-a", type=str, default="sentence-transformers/all-MiniLM-L6-v2",
+                   help="Modelo semântico A (MiniLM por padrão).")
+    m.add_argument("--semantic-b", type=str, default="BAAI/bge-large-en-v1.5",
+                   help="Modelo semântico B (BGE-Large por padrão).")
+    m.add_argument("--tfidf-dim", type=int, default=1000,
+                   help="Dimensão do TF-IDF (max_features). Use 0 para vocabulário ilimitado.")
+    m.add_argument("--tfidf-min-df", type=int, default=2,
+                   help="Min document frequency para TF-IDF (default: 2).")
+    m.add_argument("--tfidf-backend", type=str, choices=["sklearn", "pyserini"], default="sklearn")
+    m.add_argument("--tfidf-scale-multiplier", type=float, default=1.25,
+                   help="Multiplicador de escalonamento TF-IDF.")
+    m.add_argument("--device", type=str, default=_DEFAULT_DEVICE, help="ex.: cuda:0 ou cpu")
+
+    # artefatos/caches
+    a = p.add_argument_group("Artefatos")
+    a.add_argument("--index-artifacts", type=str, default="",
+                   help="Pasta para salvar/carregar índice FAISS.")
+    a.add_argument("--csv-out", type=str, default="", help="Salvar tabela A/B em CSV (linha por modelo/dataset).")
+
+    # FAISS
+    f = p.add_argument_group("FAISS")
+    f.add_argument("--faiss-factory", type=str, default="",
+                   help='Ex.: "OPQ64,IVF4096,PQ64x8" (vazio => FlatIP).')
+    f.add_argument("--faiss-metric", type=str, choices=["ip", "l2"], default="ip")
+    f.add_argument("--faiss-nprobe", type=int, default=0, help="0 => default do índice.")
+    f.add_argument("--faiss-train-size", type=int, default=0, help="0 => auto (>= 30*nlist).")
+
+    return p.parse_args()
+
+
+def main_one_dataset(ds_name: str, ds_root: Path, args) -> pd.DataFrame:
+    log = get_logger(f"bimodal_benchmark[{ds_name}]")
+
+    # diretórios de artefatos
+    out_base = ROOT / "outputs" / "artifacts"
+    idx_dir = Path(args.index_artifacts).resolve() if args.index_artifacts else (out_base / f"{ds_name}_bimodal_{'ivf' if args.faiss_factory else 'flat'}")
+    idx_dir.mkdir(parents=True, exist_ok=True)
+
+    # === Estatísticas "paper-like" x "BEIR-like" ===
+    stats = dataset_stats_both(ds_root)
+    paper_df = pd.DataFrame([{
+        "Dataset": ds_name,
+        "Corpus size": stats["corpus_size"],
+        "Queries": stats["queries_total"],
+        "Qrels*": stats["qrels_star_paper_like"],   # paper-like (na Tabela I do paper)
+    }])
+    beir_df = pd.DataFrame([{
+        "Dataset": ds_name,
+        "Split": stats["split_eval"],
+        "qrels_test_pairs (BEIR)": stats["qrels_test_pairs_beir"],
+    }])
+
+    print("\n=== TABLE I (paper-like) - Bi-Modal ===")
+    print(paper_df.to_string(index=False))
+    print("\n*Qrels* aqui = número de QUERIES no split de teste (como apresentado no paper).")
+    print("\n--- BEIR-like (pares relevantes) ---")
+    print(beir_df.to_string(index=False))
+
+    # === A/B benchmark bi-modal ===
+    metrics_rows = []
+
+    for sem_model in (args.semantic_a, args.semantic_b):
+        metrics, _ = _run_once(
+            dataset_root=ds_root,
+            qrels_path=(Path(args.qrels_path).resolve() if args.qrels_path else None),
+            semantic_model=sem_model,
+            tfidf_dim=args.tfidf_dim,
+            min_df=args.tfidf_min_df,
+            tfidf_backend=args.tfidf_backend,
+            tfidf_scale_multiplier=args.tfidf_scale_multiplier,
+            device=args.device,
+            index_artifacts=idx_dir,
+            faiss_factory=(args.faiss_factory or None),
+            faiss_metric=args.faiss_metric,
+            faiss_nprobe=(None if args.faiss_nprobe <= 0 else args.faiss_nprobe),
+            faiss_train_size=args.faiss_train_size,
+            k_eval=args.k,
+        )
+        m = metrics.iloc[0].to_dict()
+        m["dataset"] = ds_name
+        metrics_rows.append(m)
+
+    df = pd.DataFrame(metrics_rows)
+    # Ordena por dataset -> config
+    df = df[[
+        "dataset", "config", "k", "nDCG", "MRR", "MAP", "Recall", "Precision",
+        "split", "t_fit_sec", "t_index_sec", "t_retrieve_sec"
+    ]].sort_values(["dataset", "config"]).reset_index(drop=True)
+
+    print("\n=== Benchmark Bi-Modal A/B (s+t) — métricas @{} ===".format(args.k))
+    # Mostra em ordem nDCG (foco do paper) + demais métricas
+    with pd.option_context("display.max_columns", None):
+        print(df.to_string(index=False))
+
+    return df
+
+
+def main():
+    args = parse_args()
+
+    if args.dataset_root:
+        ds_root = Path(args.dataset_root).resolve()
+        ds_name = ds_root.parent.parent.name
+        assert ds_root.exists(), f"Dataset root não encontrado: {ds_root}"
+        all_names = [ds_name]
+        roots = {ds_name: ds_root}
+    elif args.all:
+        all_names = ["scifact", "fiqa", "nfcorpus"]
+        roots = {n: _default_dataset_root(n) for n in all_names}
+        for n, r in roots.items():
+            assert r.exists(), f"Dataset root não encontrado: {r}"
+    else:
+        ds_name = args.dataset
+        ds_root = _default_dataset_root(ds_name)
+        assert ds_root.exists(), f"Dataset root não encontrado: {ds_root}"
+        all_names = [ds_name]
+        roots = {ds_name: ds_root}
+
+    # roda e agrega resultados
+    all_metrics = []
+    for n in all_names:
+        df = main_one_dataset(n, roots[n], args)
+        all_metrics.append(df)
+
+    out = pd.concat(all_metrics, ignore_index=True)
+
+    # resumo estilo Tabela IV (apenas nDCG@k por dataset)
+    summary = out.pivot_table(index="dataset", columns="config", values="nDCG", aggfunc="first")
+    print("\n=== Resumo nDCG@{} por dataset (Bi-Modal s+t) ===".format(args.k))
+    print(summary.to_string())
+
+    # CSV opcional
+    if args.csv_out:
+        out_path = Path(args.csv_out)
+        ensure_dir(out_path.parent)
+        out.to_csv(out_path, index=False)
+        print(f"\nSalvo CSV detalhado em: {out_path}")
+
+if __name__ == "__main__":
+    main()
+
