@@ -27,6 +27,10 @@ Componentes principais:
 
 - Precision@k: fração de documentos recuperados até `k` que são relevantes.
   - Intuição: "qual a pureza do top-k?". Varia entre 0 e 1.
+  - **Nota**: Precision@k pode parecer baixa quando há poucos documentos relevantes por query.
+    Por exemplo, se uma query tem apenas 1 relevante e ele aparece no top-10, Precision@10 = 1/10 = 0.1,
+    mesmo que o Recall seja perfeito (1.0). Isso é comportamento esperado e matematicamente correto
+    para datasets com relevância esparsa (poucos relevantes por query).
 
 Observações:
 - Em `nDCG@k`, utilizamos ganhos (coluna `score` de `qrels`) permitindo graus de relevância (ex.: 0/1/2). Para outras métricas, tratamos relevância binária (`score > 0`).
