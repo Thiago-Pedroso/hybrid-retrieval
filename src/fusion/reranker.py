@@ -24,3 +24,21 @@ class TriModalReranker:
             scores.append((doc_id, float(s)))
         scores.sort(key=lambda x: x[1], reverse=True)
         return scores
+
+class BiModalReranker:
+    """
+    Reranker bi-modal: recalcula score combinando cosenos por fatia (s/t) com pesos (ws,wt).
+    """
+    def __init__(self, vec):  # vec: BiModalVectorizer
+        self.vec = vec
+
+    def rescore(self, query_text: str, candidate_docs: List[Tuple[str, str]], weights) -> List[Tuple[str, float]]:
+        ws, wt = weights
+        qp = self.vec.encode_text(query_text, is_query=True)
+        scores = []
+        for doc_id, doc_text in candidate_docs:
+            dp = self.vec.encode_text(doc_text, is_query=False)
+            s = ws * cosine(qp["s"], dp["s"]) + wt * cosine(qp["t"], dp["t"])
+            scores.append((doc_id, float(s)))
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores
