@@ -7,12 +7,14 @@ from typing import Dict, Any, Optional
 from ..core.interfaces import AbstractRetriever
 from ..vectorizers.factory import create_vectorizer
 from ..indexes.factory import create_index
-from ..fusion.factory import create_weight_policy, create_reranker, create_fusion_strategy_from_config
+from ..fusion.factory import create_weight_policy, create_reranker, create_fusion_strategy_from_config, create_llm_judge, create_dat_weight_policy
 from .hybrid_faiss import HybridRetriever
 from .dense_faiss import DenseFaiss
 from .tfidf_faiss import TFIDFRetriever
 from .graph_faiss import GraphRetriever
 from .bm25_basic import BM25Basic
+from .dat_hybrid import DATHybridRetriever
+from .baseline_hybrid import BaselineHybridRetriever
 
 
 def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
@@ -106,11 +108,92 @@ def create_retriever(config: Dict[str, Any]) -> AbstractRetriever:
         )
     
     elif retriever_type == "bm25":
-        return BM25Basic()
+        k1 = config.get("k1", 0.9)
+        b = config.get("b", 0.4)
+        return BM25Basic(k1=k1, b=b)
+    
+    elif retriever_type == "dat_hybrid":
+        # Create BM25 retriever
+        bm25_config = config.get("bm25", {})
+        bm25_retriever = BM25Basic(
+            k1=bm25_config.get("k1", 0.9),
+            b=bm25_config.get("b", 0.4),
+        )
+        
+        # Create Dense retriever
+        dense_config = config.get("dense", {})
+        semantic_cfg = dense_config.get("semantic", {}) or dense_config
+        dense_retriever = DenseFaiss(
+            model_name=semantic_cfg.get("model", "sentence-transformers/all-MiniLM-L6-v2"),
+            device=semantic_cfg.get("device"),
+            query_prefix=semantic_cfg.get("query_prefix", ""),
+            doc_prefix=semantic_cfg.get("doc_prefix", ""),
+            provider=semantic_cfg.get("provider"),
+            api_key=semantic_cfg.get("api_key"),
+            artifact_dir=dense_config.get("index", {}).get("artifact_dir"),
+            index_name=dense_config.get("index", {}).get("index_name", "dense.index"),
+        )
+        
+        # Create LLM judge
+        fusion_config = config.get("fusion", {})
+        llm_judge_config = fusion_config.get("llm_judge", {})
+        llm_judge = create_llm_judge(llm_judge_config)
+        
+        # Create DAT weight policy
+        weight_policy = create_dat_weight_policy()
+        
+        # Top-K for retrieval
+        top_k = fusion_config.get("top_k", 20)
+        
+        return DATHybridRetriever(
+            bm25_retriever=bm25_retriever,
+            dense_retriever=dense_retriever,
+            llm_judge=llm_judge,
+            weight_policy=weight_policy,
+            top_k=top_k,
+        )
+    
+    elif retriever_type == "baseline_hybrid":
+        # Create BM25 retriever
+        bm25_config = config.get("bm25", {})
+        bm25_retriever = BM25Basic(
+            k1=bm25_config.get("k1", 0.9),
+            b=bm25_config.get("b", 0.4),
+        )
+        
+        # Create Dense retriever
+        dense_config = config.get("dense", {})
+        semantic_cfg = dense_config.get("semantic", {}) or dense_config
+        dense_retriever = DenseFaiss(
+            model_name=semantic_cfg.get("model", "sentence-transformers/all-MiniLM-L6-v2"),
+            device=semantic_cfg.get("device"),
+            query_prefix=semantic_cfg.get("query_prefix", ""),
+            doc_prefix=semantic_cfg.get("doc_prefix", ""),
+            provider=semantic_cfg.get("provider"),
+            api_key=semantic_cfg.get("api_key"),
+            artifact_dir=dense_config.get("index", {}).get("artifact_dir"),
+            index_name=dense_config.get("index", {}).get("index_name", "dense.index"),
+        )
+        
+        # Fixed alpha
+        fusion_config = config.get("fusion", {})
+        alpha = fusion_config.get("alpha", 0.6)
+        if alpha is None:
+            raise ValueError("baseline_hybrid requires 'alpha' in fusion config")
+        
+        # Top-K for retrieval
+        top_k = fusion_config.get("top_k", 20)
+        
+        return BaselineHybridRetriever(
+            bm25_retriever=bm25_retriever,
+            dense_retriever=dense_retriever,
+            alpha=alpha,
+            top_k=top_k,
+        )
     
     else:
         raise ValueError(
             f"Unknown retriever type: {retriever_type}. "
-            f"Available: hybrid, dense, tfidf, graph, bm25"
+            f"Available: hybrid, dense, tfidf, graph, bm25, dat_hybrid, baseline_hybrid"
         )
 

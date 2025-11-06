@@ -5,9 +5,10 @@ Factory for creating fusion components (policies, rerankers) from configuration.
 from __future__ import annotations
 from typing import Dict, Any, Optional, Tuple
 from ..core.interfaces import AbstractWeightPolicy, AbstractReranker
-from .weighting import StaticPolicy, HeuristicLLMPolicy
+from .weighting import StaticPolicy, HeuristicLLMPolicy, DATWeightPolicy
 from .reranker import TriModalReranker, BiModalReranker
 from .strategies import create_fusion_strategy, AbstractFusionStrategy
+from .llm_judge import LLMJudge
 
 
 def create_weight_policy(config: Dict[str, Any]) -> AbstractWeightPolicy:
@@ -88,3 +89,35 @@ def create_fusion_strategy_from_config(config: Dict[str, Any]) -> AbstractFusion
     
     return create_fusion_strategy(strategy_name, **kwargs)
 
+
+def create_llm_judge(config: Dict[str, Any]) -> LLMJudge:
+    """Create an LLM judge from configuration.
+    
+    Args:
+        config: Configuration with LLM judge parameters
+        
+    Returns:
+        LLMJudge instance
+    """
+    return LLMJudge(
+        model=config.get("model", "gpt-4o-mini"),
+        temperature=config.get("temperature", 0.0),
+        max_tokens=config.get("max_tokens", 10),
+        prompt_template=config.get("prompt_template"),
+        cache_dir=config.get("cache_dir"),
+        timeout=config.get("timeout", 30),
+        max_retries=config.get("max_retries", 3),
+        api_key=config.get("api_key"),
+        max_text_tokens=config.get("max_text_tokens", 2000),
+        rate_limit_tier=config.get("rate_limit_tier", 2),
+        rate_limit_safety_margin=config.get("rate_limit_safety_margin", 0.1),
+    )
+
+
+def create_dat_weight_policy() -> DATWeightPolicy:
+    """Create a DAT weight policy.
+    
+    Returns:
+        DATWeightPolicy instance
+    """
+    return DATWeightPolicy()

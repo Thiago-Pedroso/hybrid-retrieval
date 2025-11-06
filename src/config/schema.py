@@ -47,11 +47,30 @@ class VectorizerConfig(BaseModel):
     graph: Optional[GraphConfig] = None
 
 
+class LLMJudgeConfig(BaseModel):
+    """Configuration for LLM judge."""
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.0
+    max_tokens: int = 10
+    prompt_template: Optional[str] = None
+    cache_dir: Optional[str] = None
+    timeout: int = 30
+    max_retries: int = 3
+    api_key: Optional[str] = None
+    max_text_tokens: int = 2000
+    rate_limit_tier: int = 2  # OpenAI API tier (1=default, 2=higher limits)
+    rate_limit_safety_margin: float = 0.1  # Fraction of limit to use before waiting (0.1 = 90% usage)
+
+
 class FusionConfig(BaseModel):
     """Configuration for fusion strategy."""
-    strategy: Literal["weighted_cosine", "reciprocal_rank", "learned"] = "weighted_cosine"
-    policy: Literal["static", "heuristic"] = "heuristic"
+    strategy: Literal["weighted_cosine", "reciprocal_rank", "learned", "dat_linear"] = "weighted_cosine"
+    policy: Literal["static", "heuristic", "dat"] = "heuristic"
     weights: Optional[List[float]] = None  # For static policy
+    # DAT-specific parameters
+    top_k: Optional[int] = 20  # Top-K for retrieval before fusion
+    llm_judge: Optional[LLMJudgeConfig] = None  # For DAT adaptive alpha
+    alpha: Optional[float] = None  # For baseline fixed alpha (0.0 to 1.0)
 
 
 class RerankerConfig(BaseModel):
@@ -74,11 +93,17 @@ class IndexConfig(BaseModel):
 class RetrieverConfig(BaseModel):
     """Configuration for a retriever."""
     name: Optional[str] = None
-    type: Literal["hybrid", "dense", "tfidf", "graph", "bm25"] = "hybrid"
+    type: Literal["hybrid", "dense", "tfidf", "graph", "bm25", "dat_hybrid", "baseline_hybrid"] = "hybrid"
     vectorizer: Optional[VectorizerConfig] = None
     fusion: Optional[FusionConfig] = None
     reranker: Optional[RerankerConfig] = None
     index: Optional[IndexConfig] = None
+    # BM25-specific parameters (for individual BM25 or hybrid)
+    k1: Optional[float] = None  # BM25 k1 parameter (default: 0.9)
+    b: Optional[float] = None    # BM25 b parameter (default: 0.4)
+    # DAT/Baseline Hybrid-specific parameters
+    bm25: Optional[Dict[str, Any]] = None  # BM25 config for hybrid
+    dense: Optional[Dict[str, Any]] = None  # Dense config for hybrid
 
 
 class DatasetConfig(BaseModel):

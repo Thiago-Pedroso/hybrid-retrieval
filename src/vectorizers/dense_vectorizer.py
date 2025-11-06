@@ -70,4 +70,3 @@ class DenseVectorizer(AbstractVectorizer):
     def total_dim(self) -> int:
         """Total dimension (semantic only)."""
         return self._dim
-    
