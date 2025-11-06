@@ -1,0 +1,69 @@
+# Comando para executar:
+# python scripts/run_experiment.py --config configs/dat_experiments/06_dat_hybrid_gpt4o.yaml
+#
+# DAT Hybrid: Dynamic Alpha Tuning com GPT-4o como LLM judge (mais preciso, mais caro)
+# Dataset: squad_small
+
+experiment:
+  name: dat_hybrid_gpt4o_squad_small
+  output_dir: "./outputs/experiments/dat_experiments"
+
+dataset:
+  name: "squad_small"
+  root: "./data/squad_small/processed/beir"
+  split_preference: ["test", "dev", "validation", "train"]
+
+retrievers:
+  - name: "dat_hybrid_gpt4o"
+    type: "dat_hybrid"
+    bm25:
+      k1: 0.9
+      b: 0.4
+    dense:
+      semantic:
+        model: "text-embedding-3-large"
+        provider: "openai"
+      index:
+        type: "faiss"
+        factory: null
+        metric: "ip"
+        artifact_dir: "./outputs/artifacts/squad_small_openai_text_embedding_3_large"
+        index_name: "dense.index"
+    fusion:
+      top_k: 20
+      llm_judge:
+        model: "gpt-4o"
+        temperature: 0.0
+        max_tokens: 10
+        prompt_template: |
+          You are an expert evaluator. Your task is to assess the relevance of two provided documents (Document D and Document B) to a given query.
+          Rate each document's effectiveness on a scale from 0 to 5, where 5 means "highly relevant and directly answers the query" and 0 means "completely irrelevant".
+          Output your scores as two integers separated by a space, with Document D's score first, followed by Document B's score. For example: "4 2".
+
+          Query: {query}
+
+          Document D (Dense Retrieval Top-1):
+          {dense_text}
+
+          Document B (BM25 Retrieval Top-1):
+          {bm25_text}
+        cache_dir: "./outputs/artifacts/llm_judge_cache/squad_small"
+        timeout: 60
+        max_retries: 5
+        max_text_tokens: 2000
+        rate_limit_tier: 2
+        rate_limit_safety_margin: 0.1
+
+metrics:
+  - "nDCG"
+  - "MRR"
+  - "MAP"
+  - "Recall"
+  - "Precision"
+
+ks: [1, 3, 5, 10, 20]
+
+output_formats:
+  - "csv"
+  - "json"
+
