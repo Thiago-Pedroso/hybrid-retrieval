@@ -54,6 +54,11 @@ class DenseFaiss(AbstractRetriever):
 
         self.artifact_dir = Path(artifact_dir) if artifact_dir else None
         self.index_name = index_name
+        if self.artifact_dir:
+            self.artifact_dir.mkdir(parents=True, exist_ok=True)
+            self._index_path = self.artifact_dir / index_name
+        else:
+            self._index_path = None
 
     # ------------------------ persistência ------------------------
 
